@@ -1,61 +1,82 @@
-import OpenAI from "openai";
-import dotenv from "dotenv";
+// server.js — DALL·E image generation backend for 323KbabeAI with persistent image count
+
 import express from "express";
 import cors from "cors";
+import dotenv from "dotenv";
+import { OpenAI } from "openai";
+import fs from "fs";
+import path from "path";
 
 dotenv.config();
-
 const app = express();
 const port = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Load or initialize persistent count file
+const countFilePath = path.resolve("image-count.json");
+let imageGenerationCount = 0;
+
+if (fs.existsSync(countFilePath)) {
+  const saved = JSON.parse(fs.readFileSync(countFilePath, "utf-8"));
+  imageGenerationCount = saved.count || 0;
+} else {
+  fs.writeFileSync(countFilePath, JSON.stringify({ count: 0 }, null, 2));
+}
+
+const sampleTrends = [
+  {
+    title: "Good 4 U",
+    artist: "Olivia Rodrigo",
+    description: "Breakup anthem with a pop-punk twist, inspiring creative lip-syncs and skits.",
+    hashtags: ["#Good4U", "#OliviaRodrigo"]
+  },
+  {
+    title: "Montero (Call Me By Your Name)",
+    artist: "Lil Nas X",
+    description: "This controversial track has created loads of reaction videos, make-up looks, and fashion recreations.",
+    hashtags: ["#Montero", "#LilNasX", "#TrendReaction"]
+  },
+  {
+    title: "Levitating",
+    artist: "Dua Lipa",
+    description: "An all-time Gen Z favorite for dance challenges and fashion transitions.",
+    hashtags: ["#Levitating", "#DuaLipa"]
+  }
+];
+
 app.get("/api/trend", async (req, res) => {
   try {
-    // 1. Generate music trend info from GPT
-    const trendChat = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        {
-          role: "system",
-          content: "You're a TikTok music trend reporter. Respond in JSON. Output format:
-{
-  "title": "Song Title",
-  "artist": "Artist Name",
-  "description": "Trendy Gen Z-style description",
-  "hashtags": ["#tag1", "#tag2"]
-}"
-        },
-        {
-          role: "user",
-          content: "Give me one trending TikTok song report."
-        }
-      ]
-    });
+    const trend = sampleTrends[Math.floor(Math.random() * sampleTrends.length)];
+    const prompt = `Album art in vibrant pop style for the song \"${trend.title}\" by ${trend.artist}`;
 
-    const trend = JSON.parse(trendChat.choices[0].message.content);
-
-    // 2. Generate a DALL·E image for the trend
-    const imagePrompt = `TikTok album cover artwork for the trending song '${trend.title}' by ${trend.artist}, modern, neon, vibrant lighting`;
     const imageResponse = await openai.images.generate({
       model: "dall-e-3",
-      prompt: imagePrompt,
+      prompt,
       n: 1,
-      size: "1024x1024"
+      size: "512x512"
     });
 
     trend.image = imageResponse.data[0].url;
+    imageGenerationCount++;
 
-    // 3. Return final response
-    res.json(trend);
+    // Save to disk
+    fs.writeFileSync(countFilePath, JSON.stringify({ count: imageGenerationCount }, null, 2));
+
+    res.json({ ...trend, count: imageGenerationCount });
   } catch (err) {
-    console.error("❌ Error:", err);
-    res.status(500).json({ error: "Failed to generate trend or image." });
+    console.error("DALL·E error:", err.message);
+    res.status(500).json({ error: "Failed to generate trend image." });
   }
 });
 
+app.get("/api/stats", (req, res) => {
+  res.json({ imageGenerations: imageGenerationCount });
+});
+
 app.listen(port, () => {
-  console.log(`🚀 Server running at http://localhost:${port}`);
+  console.log(`✅ 323KbabeAI backend (persistent mode) running on port ${port}`);
 });
