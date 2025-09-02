@@ -1,7 +1,7 @@
-import OpenAI from 'openai';
-import dotenv from 'dotenv';
-import express from 'express';
-import cors from 'cors';
+import OpenAI from "openai";
+import dotenv from "dotenv";
+import express from "express";
+import cors from "cors";
 
 dotenv.config();
 
@@ -14,7 +14,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-app.get('/api/trend', async (req, res) => {
+app.get("/api/trend", async (req, res) => {
   try {
     const chat = await openai.chat.completions.create({
       model: "gpt-4",
@@ -36,15 +36,14 @@ app.get('/api/trend', async (req, res) => {
       ]
     });
 
-    const result = chat.choices[0].message.content;
-    res.json(JSON.parse(result));
-
+    const trend = chat.choices[0].message.content;
+    res.json(JSON.parse(trend));
   } catch (e) {
-    console.error("❌ API error:", e.message);
+    console.error("❌ API Error:", e.message);
     res.status(500).json({ error: "Failed to fetch trend." });
   }
 });
 
 app.listen(port, () => {
-  console.log(`✅ Server running at http://localhost:${port}`);
+  console.log(`✅ Server is running at http://localhost:${port}`);
 });
