@@ -1,4 +1,4 @@
-// server.js — 323drop Turbo (ORIGINAL stylized neon/moody, no text; live charts; pool; never-repeat; retry+recycle)
+// server.js — 323drop Turbo (PHOTO-like, strict likeness, random framing; live charts; pool; never-repeat; retry+recycle)
 // CommonJS; Node >= 20. Works on Render.
 
 const express = require("express");
@@ -36,13 +36,35 @@ const openai = new OpenAI({
   organization: process.env.OPENAI_ORG_ID, // optional
 });
 
-// ORIGINAL house style — stylized cover-art, neon/moody, abstract, NO TEXT
-function buildSpiritPrompt(title, artist){
-  return (
-    `Square album-cover image. Aesthetic cover-art visual for "${title}" by ${artist}. ` +
-    `Stylized (not photoreal), high-contrast, neon accents, moody lighting, abstract shapes and motion cues. ` +
-    `No text, no letters, no logos, no watermark.`
-  );
+// --- Framing helpers (random by default; supports full|half|face) ---
+const FRAMINGS = {
+  full: "full-body composition, subject entirely in frame, dynamic pose, ground contact visible",
+  half: "waist-up composition, expressive hands visible, dynamic torso twist",
+  face: "tight head-and-shoulders portrait, eyes in sharp focus, shallow depth of field, soft bokeh background",
+};
+function pickFrame(mode = "random") {
+  if (!mode || mode === "random") return ["full", "half", "face"][Math.floor(Math.random() * 3)];
+  return ["full", "half", "face"].includes(mode) ? mode : "full";
+}
+
+// PHOTO-like prompt: photoreal, accurate likeness, no text/logos
+function buildSpiritPrompt(
+  title,
+  artist,
+  { frame = "random", realism = "photo", likeness = "strict" } = {}
+) {
+  const f = pickFrame(frame);
+  const frameBlock = FRAMINGS[f];
+  const realismBlock =
+    realism === "photo"
+      ? "photo-realistic, natural skin texture, believable lighting, filmic color, DSLR look"
+      : "stylized illustration";
+  const likenessBlock =
+    likeness === "strict" ? `high-fidelity, accurate facial likeness of ${artist}` : "stylized, original face";
+
+  return `Square album-cover image. ${realismBlock}. ${frameBlock}. ${likenessBlock}. \
+${artist} performs the spirit of "${title}" through gesture and mood. \
+Focus on pose, motion and atmosphere. No text, no letters, no logos, no watermark.`;
 }
 
 // Retry + fallback image generation (fast & robust)
@@ -233,8 +255,8 @@ function runWithLimit(fn) {
   });
 }
 
-async function makeOne(candidate) {
-  const prompt = buildSpiritPrompt(candidate.title, candidate.artist);
+async function makeOne(candidate, opts = {}) {
+  const prompt = buildSpiritPrompt(candidate.title, candidate.artist, opts);
   const image = await generateImageUrl(prompt);
   if (!image) return null;
   stash(image);
@@ -257,7 +279,9 @@ async function refillPool() {
     });
     const need = Math.max(0, POOL_TARGET - pool.length);
     const picks = candidates.slice(0, need);
-    const gens = picks.map((item) => runWithLimit(() => makeOne(item)));
+    const gens = picks.map((item) =>
+      runWithLimit(() => makeOne(item, { frame: "random", realism: "photo", likeness: "strict" }))
+    );
     const done = await Promise.allSettled(gens);
     for (const r of done) {
       if (r.status === "fulfilled" && r.value) {
@@ -285,7 +309,7 @@ app.get("/api/stats", (_req, res) => {
   res.json({ count: imageCount });
 });
 
-app.get("/api/trend", async (_req, res) => {
+app.get("/api/trend", async (req, res) => {
   try {
     // serve from pool (avoid repeats)
     if (pool.length) {
@@ -297,13 +321,16 @@ app.get("/api/trend", async (_req, res) => {
       return res.json({ ...item, count: imageCount });
     }
 
-    // pool empty: select fresh & try once
+    // pool empty: select fresh & try once (allow optional overrides)
+    const frame = String(req.query.frame || "random").toLowerCase();        // full|half|face|random
+    const likeness = String(req.query.likeness || "strict").toLowerCase();  // strict|stylized
+
     const list = await loadTrending();
     const pick =
       list.find((x) => !servedSet.has(keyOf(x))) ||
       list[0] || { title: "Fresh Drop", artist: "323KbabeAI", desc: "Warming up.", hashtags: ["#music", "#trend"] };
 
-    const prompt = buildSpiritPrompt(pick.title, pick.artist);
+    const prompt = buildSpiritPrompt(pick.title, pick.artist, { frame, realism: "photo", likeness });
     const image = await generateImageUrl(prompt);
     markServed(keyOf(pick));
 
