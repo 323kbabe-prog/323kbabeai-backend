@@ -1,4 +1,4 @@
-// server.js — 323drop Turbo (photoreal, exact likeness, random framing, never-repeat, retry+recycle)
+// server.js — 323drop Turbo (FULL-BODY default, photoreal, likeness strict, never-repeat, retry+recycle)
 // CommonJS; Node >= 20. Works on Render.
 
 const express = require("express");
@@ -8,8 +8,8 @@ const { fetch } = require("undici"); // guaranteed fetch
 
 // ------------------ Config ------------------
 const PORT = process.env.PORT || 10000;
-const POOL_TARGET = Number(process.env.POOL_TARGET || 6);
-the POOL_REFILL_LOW = Number(process.env.POOL_REFILL_LOW || 2);
+const POOL_TARGET = Number(process.env.POOL_TARGET || 6);     // ready-made images kept in pool
+const POOL_REFILL_LOW = Number(process.env.POOL_REFILL_LOW || 2);
 const GEN_CONCURRENCY = Number(process.env.GEN_CONCURRENCY || 1);
 const TREND_TTL_MS = Number(process.env.TREND_TTL_MS || 8 * 60 * 1000);
 const HISTORY_MAX = Number(process.env.HISTORY_MAX || 500);
@@ -17,7 +17,7 @@ const ARCHIVE_MAX = Number(process.env.ARCHIVE_MAX || 32);
 
 // ------------------ App & CORS ------------------
 const app = express();
-const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
+const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"]; // adjust if needed
 app.use(
   cors({
     origin: (origin, cb) =>
@@ -36,22 +36,22 @@ const openai = new OpenAI({
   organization: process.env.OPENAI_ORG_ID, // optional
 });
 
-// --- Framing helpers ---
+// --- Framing helpers (FULL-BODY default) ---
 const FRAMINGS = {
   full: "full-body composition, subject entirely in frame, dynamic pose, ground contact visible",
   half: "waist-up composition, expressive hands visible, dynamic torso twist",
   face: "tight head-and-shoulders portrait, eyes in sharp focus, shallow depth of field, soft bokeh background",
 };
-function pickFrame(mode = "random") {
+function pickFrame(mode = "full") {
   if (!mode || mode === "random") return ["full", "half", "face"][Math.floor(Math.random() * 3)];
   return ["full", "half", "face"].includes(mode) ? mode : "full";
 }
 
-// New prompt: photoreal + exact likeness + random framing, still no text
+// Prompt: photoreal + accurate likeness + framing, still *no text*
 function buildSpiritPrompt(
   title,
   artist,
-  { frame = "random", realism = "photo", likeness = "strict" } = {}
+  { frame = "full", realism = "photo", likeness = "strict" } = {}
 ) {
   const f = pickFrame(frame);
   const frameBlock = FRAMINGS[f];
@@ -87,7 +87,7 @@ async function generateImageUrl(prompt) {
         // org gating → next model
         if (status === 403) break;
 
-        // rate limit / transient → short backoff + retry
+        // rate limit / transient → short backoff + retry once
         if (status === 429 || /timeout|ECONNRESET|ETIMEDOUT/i.test(msg)) {
           await sleep(300 + Math.random() * 200);
           continue;
@@ -211,13 +211,13 @@ async function loadTrending({ market = "US", storefront = "us" } = {}) {
   return finalList;
 }
 
-// ------------------ Pre-gen pool, never-repeat, archive ------------------
+// ------------------ Pool, never-repeat, archive ------------------
 let pool = []; // { title, artist, description, hashtags, image }
 let imageCount = 0;
 
 // never-repeat history
 let servedSet = new Set();
-let servedQueue = []; // FIFO of keys
+let servedQueue = []; // FIFO
 function markServed(k) {
   if (!k) return;
   if (!servedSet.has(k)) {
@@ -242,21 +242,13 @@ function stash(imageSrc) {
 let active = 0;
 const q = [];
 function tick() {
-  while (active < GEN_CONCURRENCY && q.length) {
-    const t = q.shift();
-    t();
-  }
+  while (active < GEN_CONCURRENCY && q.length) q.shift()();
 }
 function runWithLimit(fn) {
   return new Promise((resolve) => {
     const task = async () => {
-      try {
-        active++;
-        resolve(await fn());
-      } finally {
-        active--;
-        tick();
-      }
+      try { active++; resolve(await fn()); }
+      finally { active--; tick(); }
     };
     q.push(task);
     tick();
@@ -288,7 +280,7 @@ async function refillPool() {
     const need = Math.max(0, POOL_TARGET - pool.length);
     const picks = candidates.slice(0, need);
     const gens = picks.map((item) =>
-      runWithLimit(() => makeOne(item, { frame: "random", realism: "photo", likeness: "strict" }))
+      runWithLimit(() => makeOne(item, { frame: "full", realism: "photo", likeness: "strict" }))
     );
     const done = await Promise.allSettled(gens);
     for (const r of done) {
@@ -307,14 +299,8 @@ function ensurePool() {
 
 // boot (non-blocking)
 (async () => {
-  try {
-    await loadTrending();
-    await refillPool();
-  } catch {}
-  setInterval(() => {
-    void loadTrending();
-    ensurePool();
-  }, 30 * 1000);
+  try { await loadTrending(); await refillPool(); } catch {}
+  setInterval(() => { void loadTrending(); ensurePool(); }, 30 * 1000);
 })();
 
 // ------------------ API ------------------
@@ -328,20 +314,16 @@ app.get("/api/trend", async (req, res) => {
     // serve from pool (avoid repeats)
     if (pool.length) {
       let idx = pool.findIndex((x) => !servedSet.has(keyOf(x)));
-      if (idx === -1) {
-        await refillPool();
-        idx = pool.findIndex((x) => !servedSet.has(keyOf(x)));
-        if (idx === -1) idx = 0;
-      }
+      if (idx === -1) { await refillPool(); idx = pool.findIndex((x) => !servedSet.has(keyOf(x))); if (idx === -1) idx = 0; }
       const item = pool.splice(idx, 1)[0];
       markServed(keyOf(item));
       ensurePool();
       return res.json({ ...item, count: imageCount });
     }
 
-    // pool empty: select fresh & try once (allow optional overrides)
-    const frame = String(req.query.frame || "random").toLowerCase();        // full|half|face|random
-    const likeness = String(req.query.likeness || "strict").toLowerCase();  // strict|stylized
+    // pool empty: select fresh & try once (allow frame override; default FULL)
+    const frame = String(req.query.frame || "full").toLowerCase();      // full|half|face|random
+    const likeness = String(req.query.likeness || "strict").toLowerCase(); // strict|stylized
 
     const list = await loadTrending();
     const pick =
@@ -355,38 +337,17 @@ app.get("/api/trend", async (req, res) => {
     if (image) {
       stash(image);
       imageCount++;
-      return res.json({
-        title: pick.title,
-        artist: pick.artist,
-        description: pick.desc,
-        hashtags: pick.hashtags,
-        image,
-        count: imageCount,
-      });
+      return res.json({ title: pick.title, artist: pick.artist, description: pick.desc, hashtags: pick.hashtags, image, count: imageCount });
     }
 
     // recycle last good image so UI still shows a visual
     if (archive.length) {
       const recycled = archive[Math.floor(Math.random() * archive.length)].src;
-      return res.json({
-        title: pick.title,
-        artist: pick.artist,
-        description: pick.desc,
-        hashtags: pick.hashtags,
-        image: recycled,
-        count: imageCount, // not incremented for recycled
-      });
+      return res.json({ title: pick.title, artist: pick.artist, description: pick.desc, hashtags: pick.hashtags, image: recycled, count: imageCount });
     }
 
     // last resort: text-only
-    return res.json({
-      title: pick.title,
-      artist: pick.artist,
-      description: pick.desc,
-      hashtags: pick.hashtags,
-      image: null,
-      count: imageCount,
-    });
+    return res.json({ title: pick.title, artist: pick.artist, description: pick.desc, hashtags: pick.hashtags, image: null, count: imageCount });
   } catch (err) {
     console.error("/api/trend error:", err?.message || err);
     return res.status(200).json({
