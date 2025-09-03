@@ -1,82 +1,81 @@
-// server.js — DALL·E image generation backend for 323KbabeAI with persistent image count
+// 🟣 FINAL server.js for 323KbabeAI (Image Generation Mode)
+// Make sure OPENAI_API_KEY is injected in Render environment
 
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import { OpenAI } from "openai";
-import fs from "fs";
-import path from "path";
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { Configuration, OpenAIApi } from 'openai';
 
 dotenv.config();
+
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY
+});
+const openai = new OpenAIApi(configuration);
 
-// Load or initialize persistent count file
-const countFilePath = path.resolve("image-count.json");
-let imageGenerationCount = 0;
+// 🔢 Track how many times image has been generated
+let imageGenCount = 0;
 
-if (fs.existsSync(countFilePath)) {
-  const saved = JSON.parse(fs.readFileSync(countFilePath, "utf-8"));
-  imageGenerationCount = saved.count || 0;
-} else {
-  fs.writeFileSync(countFilePath, JSON.stringify({ count: 0 }, null, 2));
-}
-
-const sampleTrends = [
-  {
-    title: "Good 4 U",
-    artist: "Olivia Rodrigo",
-    description: "Breakup anthem with a pop-punk twist, inspiring creative lip-syncs and skits.",
-    hashtags: ["#Good4U", "#OliviaRodrigo"]
-  },
-  {
-    title: "Montero (Call Me By Your Name)",
-    artist: "Lil Nas X",
-    description: "This controversial track has created loads of reaction videos, make-up looks, and fashion recreations.",
-    hashtags: ["#Montero", "#LilNasX", "#TrendReaction"]
-  },
-  {
-    title: "Levitating",
-    artist: "Dua Lipa",
-    description: "An all-time Gen Z favorite for dance challenges and fashion transitions.",
-    hashtags: ["#Levitating", "#DuaLipa"]
-  }
-];
-
-app.get("/api/trend", async (req, res) => {
+app.get('/api/trend', async (req, res) => {
   try {
-    const trend = sampleTrends[Math.floor(Math.random() * sampleTrends.length)];
-    const prompt = `Album art in vibrant pop style for the song \"${trend.title}\" by ${trend.artist}`;
+    // Trend data (can later come from dynamic search)
+    const trends = [
+      {
+        title: "Good 4 U",
+        artist: "Olivia Rodrigo",
+        description: "Breakup anthem with a pop-punk twist, inspiring creative lip-syncs and skits.",
+        hashtags: ["#Good4U", "#OliviaRodrigo"]
+      },
+      {
+        title: "Stay",
+        artist: "The Kid LAROI and Justin Bieber",
+        description: "This catchy tune sets the scene for comedic or dramatic moments. Used in over 1.5 million videos.",
+        hashtags: ["#Stay", "#TheKidLAROI", "#JustinBieber", "#Trend"]
+      },
+      {
+        title: "Industry Baby",
+        artist: "Lil Nas X ft. Jack Harlow",
+        description: "Viral challenge marked by a funky dance routine. Paired with self-transformation videos.",
+        hashtags: ["#industrybaby", "#lilnasx", "#challenge"]
+      }
+    ];
 
-    const imageResponse = await openai.images.generate({
-      model: "dall-e-3",
-      prompt,
+    const trend = trends[Math.floor(Math.random() * trends.length)];
+
+    // 🎨 Generate image using DALL·E
+    const imageResponse = await openai.createImage({
+      prompt: `${trend.title} by ${trend.artist}, album cover art`,
       n: 1,
       size: "512x512"
     });
 
-    trend.image = imageResponse.data[0].url;
-    imageGenerationCount++;
+    const imageUrl = imageResponse?.data?.data[0]?.url;
+    if (!imageUrl) throw new Error('No image URL');
 
-    // Save to disk
-    fs.writeFileSync(countFilePath, JSON.stringify({ count: imageGenerationCount }, null, 2));
+    imageGenCount++;
 
-    res.json({ ...trend, count: imageGenerationCount });
-  } catch (err) {
-    console.error("DALL·E error:", err.message);
-    res.status(500).json({ error: "Failed to generate trend image." });
+    res.json({
+      ...trend,
+      image: imageUrl,
+      count: imageGenCount
+    });
+
+  } catch (error) {
+    console.error('[/api/trend] Error:', error.message);
+    res.status(500).json({ error: 'Failed to generate trend image.' });
   }
 });
 
-app.get("/api/stats", (req, res) => {
-  res.json({ imageGenerations: imageGenerationCount });
+// 📊 Get image generation count
+app.get('/api/stats', (req, res) => {
+  res.json({ count: imageGenCount });
 });
 
 app.listen(port, () => {
-  console.log(`✅ 323KbabeAI backend (persistent mode) running on port ${port}`);
+  console.log(`🔥 323KbabeAI running at http://localhost:${port}`);
 });
