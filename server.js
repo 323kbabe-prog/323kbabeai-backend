@@ -1,4 +1,4 @@
-// server.js — 323drop Turbo (spirit-only, fast, never-repeat, retry+recycle)
+// server.js — 323drop Turbo (photoreal, exact likeness, random framing, never-repeat, retry+recycle)
 // CommonJS; Node >= 20. Works on Render.
 
 const express = require("express");
@@ -9,7 +9,7 @@ const { fetch } = require("undici"); // guaranteed fetch
 // ------------------ Config ------------------
 const PORT = process.env.PORT || 10000;
 const POOL_TARGET = Number(process.env.POOL_TARGET || 6);
-const POOL_REFILL_LOW = Number(process.env.POOL_REFILL_LOW || 2);
+the POOL_REFILL_LOW = Number(process.env.POOL_REFILL_LOW || 2);
 const GEN_CONCURRENCY = Number(process.env.GEN_CONCURRENCY || 1);
 const TREND_TTL_MS = Number(process.env.TREND_TTL_MS || 8 * 60 * 1000);
 const HISTORY_MAX = Number(process.env.HISTORY_MAX || 500);
@@ -36,13 +36,35 @@ const openai = new OpenAI({
   organization: process.env.OPENAI_ORG_ID, // optional
 });
 
-// New “spirit-only + artist acts it” style — minimal, no text
-function buildSpiritPrompt(title, artist) {
-  return (
-    `Square album-cover image. Capture only the main spirit of "${title}" performed by ${artist} as a stylized character ` +
-    `acting the mood — expressive pose/gesture, movement, and simple scene that conveys the vibe. Focus on silhouette, rhythm, ` +
-    `and texture instead of detailed likeness. Clean background. No text, no letters, no logos, no watermark.`
-  );
+// --- Framing helpers ---
+const FRAMINGS = {
+  full: "full-body composition, subject entirely in frame, dynamic pose, ground contact visible",
+  half: "waist-up composition, expressive hands visible, dynamic torso twist",
+  face: "tight head-and-shoulders portrait, eyes in sharp focus, shallow depth of field, soft bokeh background",
+};
+function pickFrame(mode = "random") {
+  if (!mode || mode === "random") return ["full", "half", "face"][Math.floor(Math.random() * 3)];
+  return ["full", "half", "face"].includes(mode) ? mode : "full";
+}
+
+// New prompt: photoreal + exact likeness + random framing, still no text
+function buildSpiritPrompt(
+  title,
+  artist,
+  { frame = "random", realism = "photo", likeness = "strict" } = {}
+) {
+  const f = pickFrame(frame);
+  const frameBlock = FRAMINGS[f];
+  const realismBlock =
+    realism === "photo"
+      ? "photo-realistic, natural skin texture, believable lighting, filmic color, DSLR look"
+      : "stylized illustration";
+  const likenessBlock =
+    likeness === "strict" ? `high-fidelity, accurate facial likeness of ${artist}` : "stylized, original face";
+
+  return `Square album-cover image. ${realismBlock}. ${frameBlock}. ${likenessBlock}. \
+${artist} performs the spirit of "${title}" through gesture and mood. \
+Focus on pose, motion and atmosphere. No text, no letters, no logos, no watermark.`;
 }
 
 // Retry + fallback image generation (fast & robust)
@@ -62,10 +84,10 @@ async function generateImageUrl(prompt) {
         const msg = e?.response?.data?.error?.message || e?.message || String(e);
         console.error(`[images] ${model} attempt ${attempt + 1} failed:`, status, msg);
 
-        // org gating → move to next model
+        // org gating → next model
         if (status === 403) break;
 
-        // rate limit / transient network → short backoff and one retry
+        // rate limit / transient → short backoff + retry
         if (status === 429 || /timeout|ECONNRESET|ETIMEDOUT/i.test(msg)) {
           await sleep(300 + Math.random() * 200);
           continue;
@@ -241,8 +263,8 @@ function runWithLimit(fn) {
   });
 }
 
-async function makeOne(candidate) {
-  const prompt = buildSpiritPrompt(candidate.title, candidate.artist);
+async function makeOne(candidate, opts = {}) {
+  const prompt = buildSpiritPrompt(candidate.title, candidate.artist, opts);
   const image = await generateImageUrl(prompt);
   if (!image) return null;
   stash(image);
@@ -265,7 +287,9 @@ async function refillPool() {
     });
     const need = Math.max(0, POOL_TARGET - pool.length);
     const picks = candidates.slice(0, need);
-    const gens = picks.map((item) => runWithLimit(() => makeOne(item)));
+    const gens = picks.map((item) =>
+      runWithLimit(() => makeOne(item, { frame: "random", realism: "photo", likeness: "strict" }))
+    );
     const done = await Promise.allSettled(gens);
     for (const r of done) {
       if (r.status === "fulfilled" && r.value) {
@@ -299,7 +323,7 @@ app.get("/api/stats", (_req, res) => {
   res.json({ count: imageCount });
 });
 
-app.get("/api/trend", async (_req, res) => {
+app.get("/api/trend", async (req, res) => {
   try {
     // serve from pool (avoid repeats)
     if (pool.length) {
@@ -315,13 +339,16 @@ app.get("/api/trend", async (_req, res) => {
       return res.json({ ...item, count: imageCount });
     }
 
-    // pool empty: select fresh & try once
+    // pool empty: select fresh & try once (allow optional overrides)
+    const frame = String(req.query.frame || "random").toLowerCase();        // full|half|face|random
+    const likeness = String(req.query.likeness || "strict").toLowerCase();  // strict|stylized
+
     const list = await loadTrending();
     const pick =
       list.find((x) => !servedSet.has(keyOf(x))) ||
       list[0] || { title: "Fresh Drop", artist: "323KbabeAI", desc: "Warming up.", hashtags: ["#music", "#trend"] };
 
-    const prompt = buildSpiritPrompt(pick.title, pick.artist);
+    const prompt = buildSpiritPrompt(pick.title, pick.artist, { frame, realism: "photo", likeness });
     const image = await generateImageUrl(prompt);
     markServed(keyOf(pick));
 
@@ -338,7 +365,7 @@ app.get("/api/trend", async (_req, res) => {
       });
     }
 
-    // ❇️ Recycle last good image if gen failed so UI still shows a visual
+    // recycle last good image so UI still shows a visual
     if (archive.length) {
       const recycled = archive[Math.floor(Math.random() * archive.length)].src;
       return res.json({
@@ -346,8 +373,8 @@ app.get("/api/trend", async (_req, res) => {
         artist: pick.artist,
         description: pick.desc,
         hashtags: pick.hashtags,
-        image: recycled, // recycled visual
-        count: imageCount, // not incrementing; it's recycled
+        image: recycled,
+        count: imageCount, // not incremented for recycled
       });
     }
 
