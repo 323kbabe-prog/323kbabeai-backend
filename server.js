@@ -1,4 +1,5 @@
-// server.js — 323drop Live (Gen-Z fans styles + title/Spotify vibe + SSE + fallbacks)
+// server.js — 323drop Fans Set v2
+// Gen-Z fans styles + title/Spotify vibe + SSE + fallbacks + inspo + identity + cover
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -9,7 +10,8 @@ const { fetch } = require("undici");
 const app = express();
 
 /* ---------------- CORS ---------------- */
-const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
+const ALLOW = (process.env.CORS_ALLOW || "https://1ai323.ai,https://www.1ai323.ai")
+  .split(",").map(s => s.trim()).filter(Boolean);
 app.use(cors({
   origin: (origin, cb) => (!origin || ALLOW.includes(origin)) ? cb(null, true) : cb(new Error("CORS: origin not allowed")),
   methods: ["GET", "OPTIONS"],
@@ -46,7 +48,7 @@ const STYLE_PRESETS = {
     description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
     tags: [
       "square 1:1 cover, subject centered, shoulders-up or half-body",
-      "flash-lit glossy skin with subtle K-beauty glow",
+      "flash-lit glossy skin with subtle beauty glow",
       "pastel gradient background (milk pink, baby blue, lilac) with haze",
       "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
       "tiny glitter bokeh and lens glints",
@@ -115,6 +117,26 @@ function vibeFromTitle(title = "") {
   const out = new Set();
   for (const m of MAP) if (m.re.test(title)) m.tags.forEach(t => out.add(t));
   return [...out];
+}
+
+/* ---------------- Inspiration notes (style-only, not likeness) ---------------- */
+function inspoToTags(inspo = "") {
+  const chunks = String(inspo).split(/[,|]/).map(s => s.trim()).filter(Boolean);
+  return chunks.slice(0, 8).map(x => `inspired detail: ${x}`);
+}
+
+/* ---------------- Identity & Cover helpers ---------------- */
+/**
+ * identity: neutral demographic descriptor (e.g., "East Asian", "Black American", "Latina", "South Asian", "White European", "Arab", "Pacific Islander", etc)
+ * cover:    general cover-art aesthetic (e.g., "minimalist studio sweep", "moody stage", "bright pastel photocard")
+ */
+function normalizeIdentity(identity = "") {
+  const s = String(identity).trim();
+  return s ? `Depict subject identity as ${s} pop-idol vibe.` : "";
+}
+function normalizeCover(cover = "") {
+  const s = String(cover).trim();
+  return s ? `Match the cover-art aesthetic (layout + lighting mood): ${s}. Do not reproduce or trace any existing cover; keep it original.` : "";
 }
 
 /* ---------------- Spotify — optional audio features → vibe ---------------- */
@@ -218,18 +240,23 @@ function visualHintsFromAudio(f) {
   return tags;
 }
 
-/* ---------------- Prompt builder (fans) ---------------- */
-function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = []) {
+/* ---------------- Prompt builder (fans + inspo + identity + cover) ---------------- */
+function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = [], identity = "", cover = "") {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
+  const idLine = normalizeIdentity(identity);
+  const coverLine = normalizeCover(cover);
   return [
     `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
     `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
+    idLine,
+    coverLine,
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
     ...s.tags.map(t => `• ${t}`),
-    ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : [])
-  ].join(" ");
+    ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
+    ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
+  ].filter(Boolean).join(" ");
 }
 
 /* ---------------- Image generation + fallbacks ---------------- */
@@ -322,6 +349,7 @@ app.get("/diag/env", (_req,res) => res.json({
   has_SPOTIFY_ID:     Boolean(process.env.SPOTIFY_CLIENT_ID),
   has_SPOTIFY_SECRET: Boolean(process.env.SPOTIFY_CLIENT_SECRET),
   DEFAULT_STYLE,
+  ALLOW,
   node: process.version,
 }));
 app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
@@ -353,7 +381,10 @@ app.get("/api/trend-stream", async (req, res) => {
     lastKey = key;
 
     // Compose vibe
-    const styleKey = String(req.query.style || DEFAULT_STYLE);
+    const styleKey  = String(req.query.style || DEFAULT_STYLE);
+    const inspoTags = inspoToTags(req.query.inspo || "");
+    const identity  = String(req.query.identity || "");
+    const cover     = String(req.query.cover || "");
     const titleTags = vibeFromTitle(pick.title);
     let audioTags = [];
     try {
@@ -361,7 +392,7 @@ app.get("/api/trend-stream", async (req, res) => {
       if (f) audioTags = visualHintsFromAudio(f);
     } catch (e) { /* optional; ignore if no Spotify keys */ }
 
-    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags]);
+    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], inspoTags, identity, cover);
     send("status", { msg: "generating image…" });
     const imageUrl = await getImageWithFallback(pick, prompt);
     if (lastImgErr) send("diag", lastImgErr);
@@ -404,7 +435,10 @@ app.get("/api/trend", async (req, res) => {
     }
     lastKey = key;
 
-    const styleKey = String(req.query.style || DEFAULT_STYLE);
+    const styleKey  = String(req.query.style || DEFAULT_STYLE);
+    const inspoTags = inspoToTags(req.query.inspo || "");
+    const identity  = String(req.query.identity || "");
+    const cover     = String(req.query.cover || "");
     const titleTags = vibeFromTitle(pick.title);
     let audioTags = [];
     try {
@@ -412,7 +446,7 @@ app.get("/api/trend", async (req, res) => {
       if (f) audioTags = visualHintsFromAudio(f);
     } catch {}
 
-    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags]);
+    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], inspoTags, identity, cover);
     const imageUrl = await getImageWithFallback(pick, prompt);
     if (imageUrl) imageCount += 1;
 
@@ -439,6 +473,6 @@ app.get("/api/trend", async (req, res) => {
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`323drop live backend on :${PORT}`);
+  console.log(`fans-set-v2 backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
 });
