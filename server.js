@@ -208,19 +208,19 @@ app.get("/api/trend", async (req, res) => {
       artist: pick.artist,
       description: pick.desc || "Trending right now.",
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
-      image: imageUrl,
+      image: imageUrl,   // may be https://… or data:image/png;base64,…
       count: imageCount,
     });
   } catch (err) {
     console.error("[error] trend route:", err?.message || err);
+    // Keep consistent shape; frontend now just shows % loader if image is absent
     return res.status(200).json({
       title: "Fresh Drop",
       artist: "323KbabeAI",
       description: "We couldn’t pull live charts. Showing text-only.",
       hashtags: ["#music","#trend"],
       image: null,
-      count: imageCount,
-      error: "Live charts unavailable",
+      count: imageCount
     });
   }
 });
