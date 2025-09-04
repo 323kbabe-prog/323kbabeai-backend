@@ -1,5 +1,5 @@
-// server.js — 323drop Live (stylized/original-face images; diagnostics)
-// CommonJS; Node >= 20
+// server.js — 323drop Live (SSE status + fallbacks)
+// Node >= 20, CommonJS
 
 const express = require("express");
 const cors = require("cors");
@@ -8,7 +8,7 @@ const { fetch } = require("undici");
 
 const app = express();
 
-// --- CORS: allow your domains ---
+/* ---------------- CORS ---------------- */
 const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
 app.use(cors({
   origin: (origin, cb) => (!origin || ALLOW.includes(origin)) ? cb(null, true) : cb(new Error("CORS: origin not allowed")),
@@ -17,18 +17,20 @@ app.use(cors({
   maxAge: 86400,
 }));
 
-// --- OpenAI client ---
+/* ---------------- OpenAI ---------------- */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
 });
 
+/* ---------------- State ---------------- */
 let imageCount = 0;
 let lastKey = "";
+let lastImgErr = null;
 let trendingCache = { data: [], expires: 0 };
 let spotifyTokenCache = { token: null, expires: 0 };
 
-// --- helpers ---
+/* ---------------- Helpers ---------------- */
 const shuffle = (a) => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const dedupeByKey = (items) => {
   const seen = new Set();
@@ -38,7 +40,7 @@ const dedupeByKey = (items) => {
   });
 };
 
-// --- Spotify & Apple (optional; fallback if missing) ---
+/* ---------------- Live trend sources (optional) ---------------- */
 async function getSpotifyToken() {
   const now = Date.now();
   if (spotifyTokenCache.token && now < spotifyTokenCache.expires - 60000) return spotifyTokenCache.token;
@@ -95,26 +97,26 @@ async function loadTrending({ market = "US", storefront = "us" } = {}) {
       getAppleMostPlayed(storefront, 50),
     ]);
     items = [...top50, ...viral50, ...apple];
-  } catch (e) { console.error("Trending sources error:", e?.message || e); }
+  } catch (e) {
+    console.error("Trending sources error:", e?.message || e);
+  }
 
   if (!items.length) {
     items = [
-      { title: "Espresso",           artist: "Sabrina Carpenter", desc: "Viral chorus hooks.",       hashtags: ["#Pop","#Earworm"] },
-      { title: "Birds of a Feather", artist: "Billie Eilish",     desc: "Romance edit magnet.",      hashtags: ["#AltPop","#Viral"] },
-      { title: "Not Like Us",        artist: "Kendrick Lamar",    desc: "Chant hooks & dance edits.",hashtags: ["#HipHop","#TikTokSong"] },
+      { title: "Espresso",           artist: "Sabrina Carpenter", desc: "Viral chorus hooks.",        hashtags: ["#Pop","#Earworm"] },
+      { title: "Birds of a Feather", artist: "Billie Eilish",     desc: "Romance edit magnet.",       hashtags: ["#AltPop","#Viral"] },
+      { title: "Not Like Us",        artist: "Kendrick Lamar",    desc: "Chant hooks & dance edits.", hashtags: ["#HipHop","#TikTokSong"] },
     ];
   }
   trendingCache = { data: shuffle(dedupeByKey(items)).slice(0, 120), expires: now + 8*60*1000 };
   return trendingCache.data;
 }
 
-// --- Image generation (forces b64_json; rotates models; diagnostics) ---
-let lastImgErr = null;
-
+/* ---------------- Image generation + fallbacks ---------------- */
 function stylizedPrompt(title, artist) {
   return (
     `Square album-cover image for "${title}" by ${artist}. ` +
-    `Stylized (not photoreal), high-contrast neon/moody lighting, abstract shapes and motion cues. ` +
+    `Stylized (not photoreal), high-contrast monochrome mood, abstract shapes and motion cues. ` +
     `Create an original face inspired by the artist’s vibe (do NOT exactly replicate a real person). ` +
     `No text, no letters, no logos, no watermark.`
   );
@@ -127,7 +129,10 @@ async function generateImageUrl(prompt) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const out = await openai.images.generate({
-          model, prompt, size: "1024x1024", response_format: "b64_json"
+          model,
+          prompt,
+          size: "1024x1024",
+          response_format: "b64_json", // prefer b64 for CORS safety
         });
         const d = out?.data?.[0];
         const b64 = d?.b64_json;
@@ -142,9 +147,10 @@ async function generateImageUrl(prompt) {
           message: e?.response?.data?.error?.message || e?.message || String(e),
         };
         console.error("[images]", lastImgErr);
-        if (lastImgErr.status === 403) break; // org/key not allowed → try next model
+        if (lastImgErr.status === 403) break; // not allowed in org → next model
         if (lastImgErr.status === 429 || /timeout|ECONNRESET|ETIMEDOUT/i.test(lastImgErr.message)) {
-          await sleep(300 + Math.random()*200); continue;
+          await sleep(300 + Math.random()*300);
+          continue;
         }
       }
       break;
@@ -153,7 +159,57 @@ async function generateImageUrl(prompt) {
   return null;
 }
 
-// Diagnostics
+// Public iTunes artwork fallback (preview use)
+async function fallbackArtwork({ title, artist }) {
+  try {
+    const url = new URL("https://itunes.apple.com/search");
+    url.searchParams.set("term", `${title} ${artist}`);
+    url.searchParams.set("entity", "song");
+    url.searchParams.set("limit", "1");
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`itunes ${r.status}`);
+    const j = await r.json();
+    const a = j.results?.[0]?.artworkUrl100 || j.results?.[0]?.artworkUrl60;
+    if (!a) return null;
+    return a
+      .replace(/60x60bb(\.(jpg|png))/, "1000x1000bb$1")
+      .replace(/100x100bb(\.(jpg|png))/, "1000x1000bb$1");
+  } catch {
+    return null;
+  }
+}
+
+// Guaranteed B/W abstract placeholder (no text)
+function bwSvgPlaceholder(seed) {
+  const n = Array.from(seed).reduce((a,c)=>((a<<5)-a)+c.charCodeAt(0),0)>>>0;
+  const r1 = 180 + (n % 180), r2 = 110 + (n % 110);
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024'>
+    <defs>
+      <linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+        <stop offset='0%' stop-color='#000'/><stop offset='100%' stop-color='#fff'/>
+      </linearGradient>
+      <filter id='grain'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/><feColorMatrix type='saturate' values='0'/><feComponentTransfer><feFuncA type='table' tableValues='0 .06'/></feComponentTransfer></filter>
+    </defs>
+    <rect width='1024' height='1024' fill='url(#g)'/>
+    <rect width='1024' height='1024' filter='url(#grain)' opacity='.2'/>
+    <circle cx='512' cy='512' r='${r1}' fill='none' stroke='#fff' stroke-opacity='.12' stroke-width='2'/>
+    <circle cx='512' cy='512' r='${r2}' fill='none' stroke='#fff' stroke-opacity='.08' stroke-width='2'/>
+  </svg>`;
+  return "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
+}
+
+async function getImageWithFallback(pick, prompt) {
+  // 1) Try OpenAI
+  const img = await generateImageUrl(prompt);
+  if (img) return img;
+  // 2) Try album artwork (public iTunes Search API)
+  const art = await fallbackArtwork(pick);
+  if (art) return art;
+  // 3) Guaranteed abstract B/W
+  return bwSvgPlaceholder(`${pick.title}|${pick.artist}`);
+}
+
+/* ---------------- Diagnostics ---------------- */
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/diag/env", (_req,res) => {
   res.json({
@@ -164,23 +220,76 @@ app.get("/diag/env", (_req,res) => {
     node: process.version,
   });
 });
-
-// --- Routes ---
 app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
+app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
 
-app.get("/api/stats", (_req, res) => {
-  res.set("Cache-Control", "no-store");
-  res.json({ count: imageCount });
-});
+/* ---------------- SSE stream ---------------- */
+app.get("/api/trend-stream", async (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  const hb = setInterval(() => res.write(":keepalive\n\n"), 15000);
 
-app.get("/api/trend", async (req, res) => {
-  const market     = String(req.query.market || "US").toUpperCase();
-  const storefront = String(req.query.storefront || "us").toLowerCase();
+  send("hello", { ok: true });
+
+  let pick;
+  try {
+    send("status", { msg: "fetching live trends…" });
+    const list = await loadTrending({ market: "US", storefront: "us" });
+    pick = list[Math.floor(Math.random() * list.length)];
+    const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
+    if (key === lastKey && list.length > 1) {
+      pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
+    }
+    lastKey = key;
+  } catch (e) {
+    clearInterval(hb);
+    send("status", { msg: "failed to load trends." });
+    send("end", { ok:false });
+    return res.end();
+  }
+
+  send("trend", {
+    title: pick.title,
+    artist: pick.artist,
+    description: pick.desc || "Trending right now.",
+    hashtags: pick.hashtags || ["#Trending","#NowPlaying"]
+  });
 
   try {
-    const list = await loadTrending({ market, storefront });
-    if (!list.length) throw new Error("No trends available");
+    send("status", { msg: "generating image…" });
+    const prompt = stylizedPrompt(pick.title, pick.artist);
+    const imageUrl = await getImageWithFallback(pick, prompt);
 
+    if (lastImgErr) send("diag", lastImgErr); // surface if we fell back
+
+    if (imageUrl) {
+      imageCount += 1;
+      send("count", { count: imageCount });
+      send("image", { src: imageUrl });
+      send("status", { msg: "done" });
+      send("end", { ok:true });
+    } else {
+      send("status", { msg: "image unavailable." });
+      send("end", { ok:false });
+    }
+  } catch (e) {
+    send("status", { msg: `error: ${e?.message || e}` });
+    send("end", { ok:false });
+  } finally {
+    clearInterval(hb);
+    res.end();
+  }
+});
+
+/* ---------------- Legacy JSON endpoint ---------------- */
+app.get("/api/trend", async (_req, res) => {
+  try {
+    const list = await loadTrending({ market: "US", storefront: "us" });
     let pick = list[Math.floor(Math.random() * list.length)];
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
     if (key === lastKey && list.length > 1) {
@@ -189,34 +298,33 @@ app.get("/api/trend", async (req, res) => {
     lastKey = key;
 
     const prompt = stylizedPrompt(pick.title, pick.artist);
-    const imageUrl = await generateImageUrl(prompt);
+    const imageUrl = await getImageWithFallback(pick, prompt);
     if (imageUrl) imageCount += 1;
 
-    return res.json({
+    res.json({
       title: pick.title,
       artist: pick.artist,
       description: pick.desc || "Trending right now.",
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
-      image: imageUrl,   // https://... or data:image/...
-      count: imageCount,
+      image: imageUrl,
+      count: imageCount
     });
-  } catch (err) {
-    console.error("trend route error:", err?.message || err);
-    return res.status(200).json({
+  } catch (e) {
+    res.json({
       title: "Fresh Drop",
       artist: "323KbabeAI",
-      description: "We couldn’t pull live charts. Showing text-only.",
+      description: "Text-only.",
       hashtags: ["#music","#trend"],
       image: null,
-      count: imageCount,
-      error: "Live charts unavailable",
+      count: imageCount
     });
   }
 });
 
-// --- Start
+/* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`323drop live backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID);
 });
+
