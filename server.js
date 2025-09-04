@@ -1,5 +1,6 @@
-// server.js — 323drop Fans Set v2
-// Gen-Z fans styles + title/Spotify vibe + SSE + fallbacks + inspo + identity + cover
+// server.js — 323drop Fans Set v2.1
+// Gen-Z fans styles + title/Spotify vibe + SSE + fallbacks + inspo notes
+// + sex + heritage + hair/outfit (style-only) + cover/palette + caching
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -25,12 +26,41 @@ const openai = new OpenAI({
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
 });
 
+/* ---------------- Config ---------------- */
+const DEFAULT_STYLE   = process.env.DEFAULT_STYLE || "stan-photocard";
+const CACHE_TTL_MIN   = Number(process.env.CACHE_TTL_MIN || 360); // 6h
+const MAX_CACHE_ITEMS = Number(process.env.MAX_CACHE_ITEMS || 200);
+
 /* ---------------- State ---------------- */
 let imageCount = 0;
 let lastKey = "";
 let lastImgErr = null;
 let trendingCache = { data: [], expires: 0 };
 let spotifyTokenCache = { token: null, expires: 0 };
+const imageCache = new Map(); // small LRU-ish cache
+
+function cacheKey({ title, artist, styleKey, inspo, sex, heritage, hair, outfit, cover, palette }) {
+  return [
+    String(title).toLowerCase(),
+    String(artist).toLowerCase(),
+    styleKey, inspo||"", sex||"", heritage||"", hair||"", outfit||"", cover||"", palette||""
+  ].join("||");
+}
+function setCache(key, val) {
+  while (imageCache.size >= MAX_CACHE_ITEMS) {
+    const first = imageCache.keys().next().value;
+    imageCache.delete(first);
+  }
+  imageCache.set(key, { ...val, ts: Date.now() });
+}
+function getCache(key) {
+  const hit = imageCache.get(key);
+  if (!hit) return null;
+  const ageMin = (Date.now() - hit.ts) / 60000;
+  if (ageMin > CACHE_TTL_MIN) { imageCache.delete(key); return null; }
+  imageCache.delete(key); imageCache.set(key, hit); // touch (LRU-ish)
+  return hit;
+}
 
 /* ---------------- Helpers ---------------- */
 const shuffle = (a) => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
@@ -48,7 +78,7 @@ const STYLE_PRESETS = {
     description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
     tags: [
       "square 1:1 cover, subject centered, shoulders-up or half-body",
-      "flash-lit glossy skin with subtle beauty glow",
+      "flash-lit glossy skin with subtle K-beauty glow",
       "pastel gradient background (milk pink, baby blue, lilac) with haze",
       "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
       "tiny glitter bokeh and lens glints",
@@ -99,8 +129,6 @@ const STYLE_PRESETS = {
   }
 };
 
-const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
-
 /* ---------------- Title → vibe tags ---------------- */
 function vibeFromTitle(title = "") {
   const MAP = [
@@ -119,24 +147,40 @@ function vibeFromTitle(title = "") {
   return [...out];
 }
 
-/* ---------------- Inspiration notes (style-only, not likeness) ---------------- */
+/* ---------------- Style-only controls (no likeness) ---------------- */
 function inspoToTags(inspo = "") {
   const chunks = String(inspo).split(/[,|]/).map(s => s.trim()).filter(Boolean);
   return chunks.slice(0, 8).map(x => `inspired detail: ${x}`);
 }
-
-/* ---------------- Identity & Cover helpers ---------------- */
-/**
- * identity: neutral demographic descriptor (e.g., "East Asian", "Black American", "Latina", "South Asian", "White European", "Arab", "Pacific Islander", etc)
- * cover:    general cover-art aesthetic (e.g., "minimalist studio sweep", "moody stage", "bright pastel photocard")
- */
-function normalizeIdentity(identity = "") {
-  const s = String(identity).trim();
-  return s ? `Depict subject identity as ${s} pop-idol vibe.` : "";
+function sexToTags(sex = "") {
+  const s = String(sex || "").toLowerCase();
+  if (!s) return [];
+  // guidance without stereotyping
+  return [`present the subject as ${s} in appearance and styling; keep it respectful and natural`];
 }
-function normalizeCover(cover = "") {
-  const s = String(cover).trim();
-  return s ? `Match the cover-art aesthetic (layout + lighting mood): ${s}. Do not reproduce or trace any existing cover; keep it original.` : "";
+function heritageToTags(heritage = "") {
+  const h = String(heritage).trim();
+  if (!h) return [];
+  return [`depict the subject with ${h} heritage respectfully and authentically; avoid caricature or stereotypes`];
+}
+function hairToTags(hair = "") {
+  const t = String(hair).trim();
+  if (!t) return [];
+  return [`hair styling cue: ${t}`];
+}
+function outfitToTags(outfit = "") {
+  const t = String(outfit).trim();
+  if (!t) return [];
+  return [`outfit styling cue: ${t}`];
+}
+function coverToTags(cover = "") {
+  const chunks = String(cover).split(/[,|]/).map(s => s.trim()).filter(Boolean);
+  return chunks.slice(0, 10).map(x => `cover-art setting cue: ${x}`);
+}
+function paletteToTags(palette = "") {
+  const parts = String(palette).split(/[,|]/).map(s => s.trim()).filter(Boolean);
+  const hex = parts.filter(p => /^#?[0-9a-fA-F]{6}$/.test(p)).slice(0, 6).map(p => p.startsWith("#")?p:"#"+p);
+  return hex.map(h => `dominant color: ${h}`);
 }
 
 /* ---------------- Spotify — optional audio features → vibe ---------------- */
@@ -240,23 +284,19 @@ function visualHintsFromAudio(f) {
   return tags;
 }
 
-/* ---------------- Prompt builder (fans + inspo + identity + cover) ---------------- */
-function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = [], identity = "", cover = "") {
+/* ---------------- Prompt builder ---------------- */
+function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], tags = []) {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
-  const idLine = normalizeIdentity(identity);
-  const coverLine = normalizeCover(cover);
   return [
     `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
     `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
-    idLine,
-    coverLine,
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
     ...s.tags.map(t => `• ${t}`),
     ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
-    ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
-  ].filter(Boolean).join(" ");
+    ...(tags.length ? ["Specific styling (no likeness):", ...tags.map(t => `• ${t}`)] : []),
+  ].join(" ");
 }
 
 /* ---------------- Image generation + fallbacks ---------------- */
@@ -333,12 +373,18 @@ function neonSvgPlaceholder(seed) {
   return "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
 }
 
-async function getImageWithFallback(pick, prompt) {
+async function getImageWithFallback(pick, prompt, keyParts) {
+  const key = cacheKey({ title: pick.title, artist: pick.artist, ...keyParts });
+  const hit = getCache(key);
+  if (hit) return hit.image;
+
   const img = await generateImageUrl(prompt);
-  if (img) return img;
+  if (img) { setCache(key, { image: img }); return img; }
   const art = await fallbackArtwork(pick);
-  if (art) return art;
-  return neonSvgPlaceholder(`${pick.title}|${pick.artist}`);
+  if (art) { setCache(key, { image: art }); return art; }
+  const svg = neonSvgPlaceholder(`${pick.title}|${pick.artist}`);
+  setCache(key, { image: svg });
+  return svg;
 }
 
 /* ---------------- Diagnostics ---------------- */
@@ -353,6 +399,7 @@ app.get("/diag/env", (_req,res) => res.json({
   node: process.version,
 }));
 app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
+app.get("/api/styles", (_req, res) => res.json({ defaults: DEFAULT_STYLE, presets: Object.keys(STYLE_PRESETS) }));
 app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
 
 /* ---------------- SSE stream ---------------- */
@@ -368,33 +415,42 @@ app.get("/api/trend-stream", async (req, res) => {
 
   send("hello", { ok: true });
 
-  let pick;
   try {
     send("status", { msg: "fetching live trends…" });
     const market = String(req.query.market || "US").toUpperCase();
+    const styleKey  = String(req.query.style || DEFAULT_STYLE);
+    const inspoTags = inspoToTags(req.query.inspo || "");
+    const sexTags   = sexToTags(req.query.sex || "");
+    const heritageTags = heritageToTags(req.query.heritage || req.query.race || "");
+    const hairTags  = hairToTags(req.query.hair || "");
+    const outfitTags= outfitToTags(req.query.outfit || "");
+    const coverTags = coverToTags(req.query.cover || "");
+    const paletteTags = paletteToTags(req.query.palette || "");
+
     const list = await loadTrending({ market, storefront: "us" });
-    pick = list[Math.floor(Math.random() * list.length)];
+    let pick = list[Math.floor(Math.random() * list.length)];
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
     if (key === lastKey && list.length > 1) {
       pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
     }
     lastKey = key;
 
-    // Compose vibe
-    const styleKey  = String(req.query.style || DEFAULT_STYLE);
-    const inspoTags = inspoToTags(req.query.inspo || "");
-    const identity  = String(req.query.identity || "");
-    const cover     = String(req.query.cover || "");
     const titleTags = vibeFromTitle(pick.title);
     let audioTags = [];
     try {
       const f = await getAudioFeaturesBySearch(pick.title, pick.artist, market);
       if (f) audioTags = visualHintsFromAudio(f);
-    } catch (e) { /* optional; ignore if no Spotify keys */ }
+    } catch {}
 
-    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], inspoTags, identity, cover);
+    const tags = [
+      ...inspoTags, ...sexTags, ...heritageTags, ...hairTags, ...outfitTags, ...coverTags, ...paletteTags
+    ];
+    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], tags);
     send("status", { msg: "generating image…" });
-    const imageUrl = await getImageWithFallback(pick, prompt);
+    const imageUrl = await getImageWithFallback(pick, prompt, {
+      styleKey, inspo: req.query.inspo || "", sex: req.query.sex || "", heritage: req.query.heritage || req.query.race || "",
+      hair: req.query.hair || "", outfit: req.query.outfit || "", cover: req.query.cover || "", palette: req.query.palette || ""
+    });
     if (lastImgErr) send("diag", lastImgErr);
 
     send("trend", {
@@ -427,6 +483,15 @@ app.get("/api/trend-stream", async (req, res) => {
 app.get("/api/trend", async (req, res) => {
   try {
     const market = String(req.query.market || "US").toUpperCase();
+    const styleKey  = String(req.query.style || DEFAULT_STYLE);
+    const inspoTags = inspoToTags(req.query.inspo || "");
+    const sexTags   = sexToTags(req.query.sex || "");
+    const heritageTags = heritageToTags(req.query.heritage || req.query.race || "");
+    const hairTags  = hairToTags(req.query.hair || "");
+    const outfitTags= outfitToTags(req.query.outfit || "");
+    const coverTags = coverToTags(req.query.cover || "");
+    const paletteTags = paletteToTags(req.query.palette || "");
+
     const list = await loadTrending({ market, storefront: "us" });
     let pick = list[Math.floor(Math.random() * list.length)];
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
@@ -435,10 +500,6 @@ app.get("/api/trend", async (req, res) => {
     }
     lastKey = key;
 
-    const styleKey  = String(req.query.style || DEFAULT_STYLE);
-    const inspoTags = inspoToTags(req.query.inspo || "");
-    const identity  = String(req.query.identity || "");
-    const cover     = String(req.query.cover || "");
     const titleTags = vibeFromTitle(pick.title);
     let audioTags = [];
     try {
@@ -446,8 +507,14 @@ app.get("/api/trend", async (req, res) => {
       if (f) audioTags = visualHintsFromAudio(f);
     } catch {}
 
-    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], inspoTags, identity, cover);
-    const imageUrl = await getImageWithFallback(pick, prompt);
+    const tags = [
+      ...inspoTags, ...sexTags, ...heritageTags, ...hairTags, ...outfitTags, ...coverTags, ...paletteTags
+    ];
+    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], tags);
+    const imageUrl = await getImageWithFallback(pick, prompt, {
+      styleKey, inspo: req.query.inspo || "", sex: req.query.sex || "", heritage: req.query.heritage || req.query.race || "",
+      hair: req.query.hair || "", outfit: req.query.outfit || "", cover: req.query.cover || "", palette: req.query.palette || ""
+    });
     if (imageUrl) imageCount += 1;
 
     res.json({
@@ -473,6 +540,6 @@ app.get("/api/trend", async (req, res) => {
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`fans-set-v2 backend on :${PORT}`);
+  console.log(`323drop fans set v2.1 backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
 });
