@@ -1,14 +1,12 @@
-// server.js — 323drop Turbo
-// ORIGINAL stylized (neon/moody, NO TEXT) + meaning-driven background & character
-// Live charts (Spotify + Apple), pre-gen pool, never-repeat, retry+recycle
+// server.js — 323drop Turbo (stylized/original face, meaning-driven; live charts; pool; never-repeat; retry+recycle; diagnostics)
 // CommonJS; Node >= 20
 
 const express = require("express");
 const cors = require("cors");
 const OpenAI = require("openai");
-const { fetch } = require("undici");
+const { fetch } = require("undici"); // reliable fetch
 
-// ------------------ Config ------------------
+// ---------- Config ----------
 const PORT = process.env.PORT || 10000;
 const POOL_TARGET = Number(process.env.POOL_TARGET || 6);
 const POOL_REFILL_LOW = Number(process.env.POOL_REFILL_LOW || 2);
@@ -17,97 +15,58 @@ const TREND_TTL_MS = Number(process.env.TREND_TTL_MS || 8 * 60 * 1000);
 const HISTORY_MAX = Number(process.env.HISTORY_MAX || 500);
 const ARCHIVE_MAX = Number(process.env.ARCHIVE_MAX || 32);
 
-// ------------------ App & CORS ------------------
+// ---------- App & CORS ----------
 const app = express();
 const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
-app.use(cors({
-  origin: (origin, cb) => (!origin || ALLOW.includes(origin)) ? cb(null, true) : cb(new Error("CORS: origin not allowed")),
-  methods: ["GET", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
-  maxAge: 86400,
-}));
+app.use(
+  cors({
+    origin: (origin, cb) => (!origin || ALLOW.includes(origin) ? cb(null, true) : cb(new Error("CORS: origin not allowed"))),
+    methods: ["GET", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+    maxAge: 86400,
+  })
+);
 app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
 
-// ------------------ OpenAI ------------------
+// ---------- OpenAI ----------
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   organization: process.env.OPENAI_ORG_ID, // optional
 });
 
-// ------------------ Meaning → descriptors ------------------
+// ---------- Meaning → descriptors ----------
 const THEMES = [
-  {
-    id: "love_soft",
-    rx: /(love|heart|romance|kiss|sweet|darling|together)/i,
+  { id: "love_soft", rx: /(love|heart|romance|kiss|sweet|darling|together)/i,
     bg: "warm sunset haze, soft cloud glow, delicate light bloom",
-    char: "gentle expression, relaxed shoulders, soft flowing hair or fabric",
-    pose: "subtle lean or tender hand-to-heart gesture",
-  },
-  {
-    id: "sad_rain",
-    rx: /(sad|alone|lonely|cry|tears|broken|hurt|blue)/i,
+    char: "gentle expression, relaxed shoulders", pose: "tender hand-to-heart or subtle lean" },
+  { id: "sad_rain", rx: /(sad|alone|lonely|cry|tears|broken|hurt|blue)/i,
     bg: "rain-streaked glass and moody reflections, cool ambient mist",
-    char: "pensive gaze, downcast eyes, minimal movement",
-    pose: "hands clasped or arms folded, introspective stance",
-  },
-  {
-    id: "night_city",
-    rx: /(night|midnight|moon|neon|late|city)/i,
+    char: "pensive gaze, downcast eyes", pose: "hands clasped or arms folded" },
+  { id: "night_city", rx: /(night|midnight|moon|neon|late|city)/i,
     bg: "city night bokeh with wet pavement reflections, volumetric glow",
-    char: "confident look with side light, hair rim-lit",
-    pose: "casual stance, slight turn toward light",
-  },
-  {
-    id: "dance_stage",
-    rx: /(dance|club|party|disco|groove|move|beat|shake)/i,
+    char: "confident look, hair rim-lit", pose: "casual stance, slight turn toward light" },
+  { id: "dance_stage", rx: /(dance|club|party|disco|groove|move|beat|shake)/i,
     bg: "concert stage beams and haze, spotlight atmosphere",
-    char: "energetic vibe, hair motion, dynamic lines",
-    pose: "mid-step or arm sweep, kinetic posture",
-  },
-  {
-    id: "ocean_dream",
-    rx: /(ocean|sea|wave|tide|shore|sail)/i,
+    char: "energetic vibe, hair in motion", pose: "mid-step or arm sweep, kinetic posture" },
+  { id: "ocean_dream", rx: /(ocean|sea|wave|tide|shore|sail)/i,
     bg: "ocean horizon haze and sea spray, dreamy shoreline mist",
-    char: "breezy styling with flowing fabric",
-    pose: "balanced stance with implied wind motion",
-  },
-  {
-    id: "storm_fire",
-    rx: /(storm|thunder|lightning|fire|burn|heat|ember)/i,
+    char: "breezy styling", pose: "balanced stance with implied wind motion" },
+  { id: "storm_fire", rx: /(storm|thunder|lightning|fire|burn|heat|ember)/i,
     bg: "distant storm glow and dramatic clouds, sparks in the air",
-    char: "intense focus, strong jawline highlight",
-    pose: "power stance or forward lean, decisive gesture",
-  },
-  {
-    id: "forest_myst",
-    rx: /(forest|woods|nature|green|leaf|earth)/i,
+    char: "intense focus", pose: "power stance or forward lean" },
+  { id: "forest_myst", rx: /(forest|woods|nature|green|leaf|earth)/i,
     bg: "misty forest layers with light shafts",
-    char: "calm and grounded, natural textures",
-    pose: "still posture with light reaching across face",
-  },
-  {
-    id: "space_drift",
-    rx: /(space|star|galaxy|astro|cosmic)/i,
+    char: "calm and grounded", pose: "still posture with light across face" },
+  { id: "space_drift", rx: /(space|star|galaxy|astro|cosmic)/i,
     bg: "deep starfield with faint nebula dust",
-    char: "serene, eyes lifted slightly",
-    pose: "weightless grace, gentle neck tilt",
-  },
-  {
-    id: "retro_vinyl",
-    rx: /(retro|vinyl|record|tape|cassette|nostalgia)/i,
+    char: "serene, eyes lifted", pose: "gentle neck tilt" },
+  { id: "retro_vinyl", rx: /(retro|vinyl|record|tape|cassette|nostalgia)/i,
     bg: "macro vinyl groove reflections (abstract), no label text",
-    char: "nostalgic styling cues",
-    pose: "relaxed, slight head tilt",
-  },
-  {
-    id: "mirror_prism",
-    rx: /(shine|flash|mirror|gloss|prism|crystal)/i,
+    char: "nostalgic cues", pose: "relaxed, slight head tilt" },
+  { id: "mirror_prism", rx: /(shine|flash|mirror|gloss|prism|crystal)/i,
     bg: "mirror reflections and prismatic glints, glossy ambience",
-    char: "sleek styling with rim highlights",
-    pose: "poised, angular silhouette",
-  },
+    char: "sleek styling", pose: "poised, angular silhouette" },
 ];
-
 const BG_FALLBACKS = [
   "abstract neon geometry with volumetric glow",
   "smoky cloud room with soft beams of light",
@@ -115,32 +74,33 @@ const BG_FALLBACKS = [
   "sunset gradient clouds across moody sky",
   "rain-kissed alley with soft reflections",
 ];
-
 function analyzeMeaning({ title = "", artist = "", hashtags = [] }) {
   const text = `${title} ${artist} ${(hashtags || []).join(" ")}`;
   const hit = THEMES.find(t => t.rx.test(text));
   if (hit) return hit;
-  // no direct hit → soft guess by common cues
-  let guess = { bg: BG_FALLBACKS[Math.floor(Math.random()*BG_FALLBACKS.length)] };
-  guess.char = "calm, introspective mood";
-  guess.pose = "simple, readable silhouette";
-  return guess;
+  return {
+    bg: BG_FALLBACKS[Math.floor(Math.random() * BG_FALLBACKS.length)],
+    char: "calm, introspective mood",
+    pose: "simple, readable silhouette",
+  };
 }
 
-// ------------------ Prompt (original stylized + meaning-driven) ------------------
+// ---------- Prompt (stylized/original face; NO TEXT) ----------
 function buildSpiritPrompt(title, artist, meaning) {
-  const bgLine   = meaning?.bg ? `${meaning.bg}. ` : "";
-  const charLine = meaning?.char ? `${meaning.char}. ` : "";
-  const poseLine = meaning?.pose ? `${meaning.pose}. ` : "";
+  const bg = meaning?.bg ? `${meaning.bg}. ` : "";
+  const ch = meaning?.char ? `${meaning.char}. ` : "";
+  const ps = meaning?.pose ? `${meaning.pose}. ` : "";
   return (
     `Square album-cover image for "${title}" by ${artist}. ` +
-    `Stylized (not photoreal), high-contrast, neon accents, moody lighting, abstract shapes and motion cues. ` +
-    `${bgLine}${charLine}${poseLine}` +
-    `No text, no letters, no logos, no watermark. Create an original face; do not exactly replicate a real person's identity.`
+    `Stylized (not photoreal), high-contrast neon/moody lighting, abstract shapes and motion cues. ` +
+    `${bg}${ch}${ps}` +
+    `Create an original face inspired by the artist’s vibe (do not exactly replicate a real person). ` +
+    `No text, no letters, no logos, no watermark.`
   );
 }
 
-// ------------------ Image gen (retry + fallback) ------------------
+// ---------- Image generation (retry + fallback + diagnostics) ----------
+let lastImgErr = null;
 async function generateImageUrl(prompt) {
   const models = ["gpt-image-1", "dall-e-3"];
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -152,12 +112,15 @@ async function generateImageUrl(prompt) {
         const url = d?.url || (d?.b64_json ? `data:image/png;base64,${d.b64_json}` : null);
         if (url) return url;
       } catch (e) {
-        const status = e?.status || e?.response?.status;
-        const msg = e?.response?.data?.error?.message || e?.message || String(e);
-        console.error(`[images] ${model} attempt ${attempt+1} failed:`, status, msg);
-        if (status === 403) break; // org gated
-        if (status === 429 || /timeout|ECONNRESET|ETIMEDOUT/i.test(msg)) {
-          await sleep(300 + Math.random()*200);
+        lastImgErr = {
+          model, attempt: attempt + 1,
+          status: e?.status || e?.response?.status || null,
+          message: e?.response?.data?.error?.message || e?.message || String(e),
+        };
+        console.error("[images]", lastImgErr);
+        if (lastImgErr.status === 403) break;                     // gated → try next model
+        if (lastImgErr.status === 429 || /timeout|ECONNRESET|ETIMEDOUT/i.test(lastImgErr.message)) {
+          await sleep(300 + Math.random() * 200);                  // brief backoff then one retry
           continue;
         }
       }
@@ -166,16 +129,17 @@ async function generateImageUrl(prompt) {
   }
   return null;
 }
+app.get("/diag/images", (_req, res) => res.json({ lastImgErr }));
 
-// ------------------ Live trending (Spotify + Apple) ------------------
+// ---------- Live trending (Spotify + Apple) ----------
 let trendingCache = { data: [], expires: 0 };
 let spotifyTokenCache = { token: null, expires: 0 };
 
-function keyOf(x) { return `${(x.title||"").toLowerCase()}::${(x.artist||"").toLowerCase()}`; }
-function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
-function dedupe(items){ const seen = new Set(); return items.filter(x => { const k=keyOf(x); if(seen.has(k)) return false; seen.add(k); return true; }); }
+const keyOf = (x) => `${(x.title || "").toLowerCase()}::${(x.artist || "").toLowerCase()}`;
+const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const dedupe = (items) => { const seen = new Set(); return items.filter(x => { const k = keyOf(x); if (seen.has(k)) return false; seen.add(k); return true; }); };
 
-async function getSpotifyToken(){
+async function getSpotifyToken() {
   const now = Date.now();
   if (spotifyTokenCache.token && now < spotifyTokenCache.expires - 60_000) return spotifyTokenCache.token;
   const id = process.env.SPOTIFY_CLIENT_ID, secret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -188,10 +152,10 @@ async function getSpotifyToken(){
   });
   if (!resp.ok) throw new Error(`Spotify token failed: ${resp.status}`);
   const j = await resp.json();
-  spotifyTokenCache = { token: j.access_token, expires: Date.now() + j.expires_in*1000 };
+  spotifyTokenCache = { token: j.access_token, expires: Date.now() + j.expires_in * 1000 };
   return spotifyTokenCache.token;
 }
-async function getSpotifyPlaylistTracks(playlistId, market="US", limit=50){
+async function getSpotifyPlaylistTracks(playlistId, market = "US", limit = 50) {
   const token = await getSpotifyToken();
   const url = new URL(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`);
   url.searchParams.set("market", market);
@@ -199,26 +163,26 @@ async function getSpotifyPlaylistTracks(playlistId, market="US", limit=50){
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!r.ok) throw new Error(`Spotify tracks failed: ${r.status}`);
   const j = await r.json();
-  return (j.items||[]).map(it=>it.track).filter(Boolean).map(tr=>({
+  return (j.items || []).map(it => it.track).filter(Boolean).map(tr => ({
     title: tr.name,
-    artist: (tr.artists||[]).map(a=>a.name).join(", "),
+    artist: (tr.artists || []).map(a => a.name).join(", "),
     desc: "Charting on Spotify.",
-    hashtags: ["#Trending","#Spotify"],
+    hashtags: ["#Trending", "#Spotify"],
   }));
 }
-async function getAppleMostPlayed(storefront="us", limit=50){
+async function getAppleMostPlayed(storefront = "us", limit = 50) {
   const url = `https://rss.applemarketingtools.com/api/v2/${storefront}/music/most-played/${limit}/songs.json`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Apple RSS failed: ${r.status}`);
   const j = await r.json();
-  return (j.feed?.results||[]).map(x=>({
+  return (j.feed?.results || []).map(x => ({
     title: x.name,
     artist: x.artistName,
     desc: "Most played on Apple Music.",
-    hashtags: ["#Trending","#AppleMusic"],
+    hashtags: ["#Trending", "#AppleMusic"],
   }));
 }
-async function loadTrending({ market="US", storefront="us" } = {}){
+async function loadTrending({ market = "US", storefront = "us" } = {}) {
   const now = Date.now();
   if (trendingCache.data.length && now < trendingCache.expires) return trendingCache.data;
 
@@ -250,27 +214,32 @@ async function loadTrending({ market="US", storefront="us" } = {}){
   return finalList;
 }
 
-// ------------------ Pool, never-repeat, archive ------------------
-let pool = []; // { title, artist, description, hashtags, image }
+// ---------- Pool, never-repeat, archive ----------
+let pool = [];           // { title, artist, description, hashtags, image }
 let imageCount = 0;
-
 let servedSet = new Set();
 let servedQueue = [];
-function markServed(k){
+
+function markServed(k) {
   if (!k || servedSet.has(k)) return;
   servedSet.add(k); servedQueue.push(k);
   if (servedQueue.length > HISTORY_MAX) { const old = servedQueue.shift(); servedSet.delete(old); }
 }
 
-let archive = []; // recycled visuals
-function stash(src){ if (src) { archive.push({ src }); if (archive.length > ARCHIVE_MAX) archive.shift(); } }
+let archive = [];        // recycled visuals if gen fails
+function stash(src) { if (src) { archive.push({ src }); if (archive.length > ARCHIVE_MAX) archive.shift(); } }
 
 // concurrency limiter
 let active = 0; const q = [];
-function tick(){ while (active < GEN_CONCURRENCY && q.length) q.shift()(); }
-function runWithLimit(fn){ return new Promise(resolve => { const t = async()=>{ try{ active++; resolve(await fn()); } finally{ active--; tick(); } }; q.push(t); tick(); }); }
+function tick() { while (active < GEN_CONCURRENCY && q.length) q.shift()(); }
+function runWithLimit(fn) {
+  return new Promise(resolve => {
+    const task = async () => { try { active++; resolve(await fn()); } finally { active--; tick(); } };
+    q.push(task); tick();
+  });
+}
 
-async function makeOne(candidate){
+async function makeOne(candidate) {
   const meaning = analyzeMeaning(candidate);
   const prompt  = buildSpiritPrompt(candidate.title, candidate.artist, meaning);
   const image   = await generateImageUrl(prompt);
@@ -280,45 +249,46 @@ async function makeOne(candidate){
     title: candidate.title,
     artist: candidate.artist,
     description: candidate.desc || "Trending right now.",
-    hashtags: candidate.hashtags || ["#Trending","#NowPlaying"],
+    hashtags: candidate.hashtags || ["#Trending", "#NowPlaying"],
     image,
   };
 }
 
-async function refillPool(){
-  try{
+async function refillPool() {
+  try {
     const trends = await loadTrending();
-    const have   = new Set(pool.map(x => keyOf(x)));
-    const picks  = trends.filter(t => !have.has(keyOf(t)) && !servedSet.has(keyOf(t))).slice(0, Math.max(0, POOL_TARGET - pool.length));
-    const gens   = picks.map(item => runWithLimit(() => makeOne(item)));
-    const done   = await Promise.allSettled(gens);
+    const have = new Set(pool.map(x => keyOf(x)));
+    const picks = trends.filter(t => !have.has(keyOf(t)) && !servedSet.has(keyOf(t)))
+                        .slice(0, Math.max(0, POOL_TARGET - pool.length));
+    const gens  = picks.map(item => runWithLimit(() => makeOne(item)));
+    const done  = await Promise.allSettled(gens);
     for (const r of done) if (r.status === "fulfilled" && r.value) { pool.push(r.value); imageCount++; }
-  }catch(e){ console.error("refillPool error:", e?.message || e); }
+  } catch (e) { console.error("refillPool error:", e?.message || e); }
 }
-function ensurePool(){ if (pool.length < POOL_REFILL_LOW) void refillPool(); }
+function ensurePool() { if (pool.length < POOL_REFILL_LOW) void refillPool(); }
 
 // boot (non-blocking)
-(async()=>{ try{ await loadTrending(); await refillPool(); }catch{} setInterval(()=>{ void loadTrending(); ensurePool(); }, 30*1000); })();
+(async () => { try { await loadTrending(); await refillPool(); } catch {} setInterval(() => { void loadTrending(); ensurePool(); }, 30 * 1000); })();
 
-// ------------------ API ------------------
-app.get("/api/stats", (_req,res)=>{ res.set("Cache-Control","no-store"); res.json({ count: imageCount }); });
+// ---------- API ----------
+app.get("/api/stats", (_req, res) => { res.set("Cache-Control", "no-store"); res.json({ count: imageCount }); });
 
 app.get("/api/trend", async (_req, res) => {
   try {
-    // Serve from pool (avoid repeats)
+    // serve from pool (avoid repeats)
     if (pool.length) {
       let idx = pool.findIndex(x => !servedSet.has(keyOf(x)));
-      if (idx === -1){ await refillPool(); idx = pool.findIndex(x => !servedSet.has(keyOf(x))); if (idx === -1) idx = 0; }
-      const item = pool.splice(idx,1)[0];
+      if (idx === -1) { await refillPool(); idx = pool.findIndex(x => !servedSet.has(keyOf(x))); if (idx === -1) idx = 0; }
+      const item = pool.splice(idx, 1)[0];
       markServed(keyOf(item));
       ensurePool();
       return res.json({ ...item, count: imageCount });
     }
 
-    // Pool empty: one-off gen
+    // pool empty: one-off
     const list = await loadTrending();
     const pick = list.find(x => !servedSet.has(keyOf(x))) || list[0] ||
-      { title: "Fresh Drop", artist: "323KbabeAI", desc: "Warming up.", hashtags: ["#music","#trend"] };
+      { title: "Fresh Drop", artist: "323KbabeAI", desc: "Warming up.", hashtags: ["#music", "#trend"] };
 
     const meaning = analyzeMeaning(pick);
     const prompt  = buildSpiritPrompt(pick.title, pick.artist, meaning);
@@ -330,7 +300,7 @@ app.get("/api/trend", async (_req, res) => {
       return res.json({ title: pick.title, artist: pick.artist, description: pick.desc, hashtags: pick.hashtags, image, count: imageCount });
     }
     if (archive.length) {
-      const recycled = archive[Math.floor(Math.random()*archive.length)].src;
+      const recycled = archive[Math.floor(Math.random() * archive.length)].src;
       return res.json({ title: pick.title, artist: pick.artist, description: pick.desc, hashtags: pick.hashtags, image: recycled, count: imageCount });
     }
     return res.json({ title: pick.title, artist: pick.artist, description: pick.desc, hashtags: pick.hashtags, image: null, count: imageCount });
@@ -340,7 +310,7 @@ app.get("/api/trend", async (_req, res) => {
       title: "Fresh Drop",
       artist: "323KbabeAI",
       description: "We couldn't load images. Text-only.",
-      hashtags: ["#music","#trend"],
+      hashtags: ["#music", "#trend"],
       image: null,
       count: imageCount,
     });
