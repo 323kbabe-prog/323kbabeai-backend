@@ -189,4 +189,42 @@ app.get("/api/trend", async (req, res) => {
 
   try {
     const list = await loadTrending({ market, storefront });
-    if (!list.length) throw new Error("No tr
+    if (!list.length) throw new Error("No trends available");
+
+    let pick = list[Math.floor(Math.random()*list.length)];
+    let tries = 0;
+    while (isRecent(`${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`) && tries < 10) {
+      pick = list[Math.floor(Math.random()*list.length)];
+      tries++;
+    }
+    pushKey(`${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`);
+
+    const prompt = `Aesthetic cover-art visual for "${pick.title}" by ${pick.artist}. Neon, moody, cinematic lighting, NO text overlay.`;
+    const imageUrl = await generateImageUrl(prompt);
+    if (imageUrl) imageCount += 1;
+
+    return res.json({
+      title: pick.title,
+      artist: pick.artist,
+      description: pick.desc || "Trending right now.",
+      hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
+      image: imageUrl,
+      count: imageCount,
+    });
+  } catch (err) {
+    console.error("[error] trend route:", err?.message || err);
+    return res.status(200).json({
+      title: "Fresh Drop",
+      artist: "323KbabeAI",
+      description: "We couldn’t pull live charts. Showing text-only.",
+      hashtags: ["#music","#trend"],
+      image: null,
+      count: imageCount,
+      error: "Live charts unavailable",
+    });
+  }
+});
+
+// --- Start server ---
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log("[boot] 323drop live backend on :"+PORT));
