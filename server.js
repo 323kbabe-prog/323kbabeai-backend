@@ -1,6 +1,6 @@
-// server.js — 323drop Fans Set v2.1
-// Gen-Z fans styles + title/Spotify vibe + SSE + fallbacks + inspo notes
-// + sex + heritage + hair/outfit (style-only) + cover/palette + caching
+// server.js — 323drop Fans Set v2.2
+// Adds auto "same gender as artist" via sex=same|auto with a safe mapping.
+// Keeps: Gen-Z fans styles + title/Spotify vibe + SSE + fallbacks + inspo notes + heritage + hair/outfit + cover/palette + caching
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -39,11 +39,12 @@ let trendingCache = { data: [], expires: 0 };
 let spotifyTokenCache = { token: null, expires: 0 };
 const imageCache = new Map(); // small LRU-ish cache
 
-function cacheKey({ title, artist, styleKey, inspo, sex, heritage, hair, outfit, cover, palette }) {
+function cacheKey(parts) {
   return [
-    String(title).toLowerCase(),
-    String(artist).toLowerCase(),
-    styleKey, inspo||"", sex||"", heritage||"", hair||"", outfit||"", cover||"", palette||""
+    String(parts.title||"").toLowerCase(),
+    String(parts.artist||"").toLowerCase(),
+    parts.styleKey||"", parts.inspo||"", parts.sex||"", parts.heritage||"",
+    parts.hair||"", parts.outfit||"", parts.cover||"", parts.palette||""
   ].join("||");
 }
 function setCache(key, val) {
@@ -58,7 +59,7 @@ function getCache(key) {
   if (!hit) return null;
   const ageMin = (Date.now() - hit.ts) / 60000;
   if (ageMin > CACHE_TTL_MIN) { imageCache.delete(key); return null; }
-  imageCache.delete(key); imageCache.set(key, hit); // touch (LRU-ish)
+  imageCache.delete(key); imageCache.set(key, hit);
   return hit;
 }
 
@@ -155,7 +156,6 @@ function inspoToTags(inspo = "") {
 function sexToTags(sex = "") {
   const s = String(sex || "").toLowerCase();
   if (!s) return [];
-  // guidance without stereotyping
   return [`present the subject as ${s} in appearance and styling; keep it respectful and natural`];
 }
 function heritageToTags(heritage = "") {
@@ -181,6 +181,48 @@ function paletteToTags(palette = "") {
   const parts = String(palette).split(/[,|]/).map(s => s.trim()).filter(Boolean);
   const hex = parts.filter(p => /^#?[0-9a-fA-F]{6}$/.test(p)).slice(0, 6).map(p => p.startsWith("#")?p:"#"+p);
   return hex.map(h => `dominant color: ${h}`);
+}
+
+/* ---------------- Auto same-gender mapping ---------------- */
+const KNOWN_ARTIST_GENDER = {
+  // pop (sample; extend as needed)
+  "sabrina carpenter": "female",
+  "billie eilish": "female",
+  "taylor swift": "female",
+  "olivia rodrigo": "female",
+  "dua lipa": "female",
+  "ariana grande": "female",
+  "beyonce": "female",
+  "ice spice": "female",
+  "doja cat": "female",
+  "rihanna": "female",
+  // k-pop soloists/groups (approximate by group)
+  "blackpink": "female",
+  "twice": "female",
+  "newjeans": "female",
+  "le sserafim": "female",
+  "itzy": "female",
+  "iu": "female",
+  "bts": "male",
+  "stray kids": "male",
+  "seventeen": "male",
+  "ateez": "male",
+  "taemin": "male",
+  // hip-hop
+  "kendrick lamar": "male",
+  "drake": "male",
+  "travis scott": "male",
+  // others
+  "justin bieber": "male",
+  "the weeknd": "male",
+  "bad bunny": "male"
+};
+function resolveSexForArtist(artist, sexParam) {
+  const s = String(sexParam||"").toLowerCase().trim();
+  if (s && s !== "same" && s !== "auto") return s; // explicit value wins
+  const key = String(artist||"").toLowerCase().trim();
+  const mapped = KNOWN_ARTIST_GENDER[key];
+  return mapped || ""; // empty means "unknown" -> no tag
 }
 
 /* ---------------- Spotify — optional audio features → vibe ---------------- */
@@ -420,7 +462,6 @@ app.get("/api/trend-stream", async (req, res) => {
     const market = String(req.query.market || "US").toUpperCase();
     const styleKey  = String(req.query.style || DEFAULT_STYLE);
     const inspoTags = inspoToTags(req.query.inspo || "");
-    const sexTags   = sexToTags(req.query.sex || "");
     const heritageTags = heritageToTags(req.query.heritage || req.query.race || "");
     const hairTags  = hairToTags(req.query.hair || "");
     const outfitTags= outfitToTags(req.query.outfit || "");
@@ -435,6 +476,10 @@ app.get("/api/trend-stream", async (req, res) => {
     }
     lastKey = key;
 
+    // Auto sex mapping when sex=same|auto
+    const resolvedSex = resolveSexForArtist(pick.artist, req.query.sex || "");
+    const sexTags = sexToTags(resolvedSex);
+
     const titleTags = vibeFromTitle(pick.title);
     let audioTags = [];
     try {
@@ -448,7 +493,8 @@ app.get("/api/trend-stream", async (req, res) => {
     const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], tags);
     send("status", { msg: "generating image…" });
     const imageUrl = await getImageWithFallback(pick, prompt, {
-      styleKey, inspo: req.query.inspo || "", sex: req.query.sex || "", heritage: req.query.heritage || req.query.race || "",
+      title: pick.title, artist: pick.artist, styleKey,
+      inspo: req.query.inspo || "", sex: resolvedSex || (req.query.sex || ""), heritage: req.query.heritage || req.query.race || "",
       hair: req.query.hair || "", outfit: req.query.outfit || "", cover: req.query.cover || "", palette: req.query.palette || ""
     });
     if (lastImgErr) send("diag", lastImgErr);
@@ -485,7 +531,6 @@ app.get("/api/trend", async (req, res) => {
     const market = String(req.query.market || "US").toUpperCase();
     const styleKey  = String(req.query.style || DEFAULT_STYLE);
     const inspoTags = inspoToTags(req.query.inspo || "");
-    const sexTags   = sexToTags(req.query.sex || "");
     const heritageTags = heritageToTags(req.query.heritage || req.query.race || "");
     const hairTags  = hairToTags(req.query.hair || "");
     const outfitTags= outfitToTags(req.query.outfit || "");
@@ -500,6 +545,10 @@ app.get("/api/trend", async (req, res) => {
     }
     lastKey = key;
 
+    // Auto sex mapping when sex=same|auto
+    const resolvedSex = resolveSexForArtist(pick.artist, req.query.sex || "");
+    const sexTags = sexToTags(resolvedSex);
+
     const titleTags = vibeFromTitle(pick.title);
     let audioTags = [];
     try {
@@ -512,7 +561,8 @@ app.get("/api/trend", async (req, res) => {
     ];
     const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], tags);
     const imageUrl = await getImageWithFallback(pick, prompt, {
-      styleKey, inspo: req.query.inspo || "", sex: req.query.sex || "", heritage: req.query.heritage || req.query.race || "",
+      title: pick.title, artist: pick.artist, styleKey,
+      inspo: req.query.inspo || "", sex: resolvedSex || (req.query.sex || ""), heritage: req.query.heritage || req.query.race || "",
       hair: req.query.hair || "", outfit: req.query.outfit || "", cover: req.query.cover || "", palette: req.query.palette || ""
     });
     if (imageUrl) imageCount += 1;
@@ -540,6 +590,6 @@ app.get("/api/trend", async (req, res) => {
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`323drop fans set v2.1 backend on :${PORT}`);
+  console.log(`323drop fans set v2.2 backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
 });
