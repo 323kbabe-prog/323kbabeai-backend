@@ -1,10 +1,10 @@
-// server.js — 323drop Live (stylized/original-face images, robust; diagnostics)
+// server.js — 323drop Live (stylized/original-face images; diagnostics)
 // CommonJS; Node >= 20
 
 const express = require("express");
 const cors = require("cors");
 const OpenAI = require("openai");
-const { fetch } = require("undici"); // reliable fetch on Node 20
+const { fetch } = require("undici");
 
 const app = express();
 
@@ -17,30 +17,28 @@ app.use(cors({
   maxAge: 86400,
 }));
 
-// --- OpenAI (make org optional to avoid mismatches) ---
+// --- OpenAI client ---
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
 });
 
-// --- State ---
 let imageCount = 0;
 let lastKey = "";
 let trendingCache = { data: [], expires: 0 };
 let spotifyTokenCache = { token: null, expires: 0 };
 
-// --- Helpers ---
+// --- helpers ---
 const shuffle = (a) => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const dedupeByKey = (items) => {
   const seen = new Set();
   return items.filter(x => {
     const k = `${(x.title||"").toLowerCase()}::${(x.artist||"").toLowerCase()}`;
-    if (seen.has(k)) return false;
-    seen.add(k); return true;
+    if (seen.has(k)) return false; seen.add(k); return true;
   });
 };
 
-// --- Spotify & Apple (live trends) ---
+// --- Spotify & Apple (optional; fallback if missing) ---
 async function getSpotifyToken() {
   const now = Date.now();
   if (spotifyTokenCache.token && now < spotifyTokenCache.expires - 60000) return spotifyTokenCache.token;
@@ -110,7 +108,7 @@ async function loadTrending({ market = "US", storefront = "us" } = {}) {
   return trendingCache.data;
 }
 
-// --- Image generation (stylized/original face; diagnostics) ---
+// --- Image generation (forces b64_json; rotates models; diagnostics) ---
 let lastImgErr = null;
 
 function stylizedPrompt(title, artist) {
@@ -128,10 +126,14 @@ async function generateImageUrl(prompt) {
   for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const out = await openai.images.generate({ model, prompt, size: "1024x1024" });
+        const out = await openai.images.generate({
+          model, prompt, size: "1024x1024", response_format: "b64_json"
+        });
         const d = out?.data?.[0];
-        const url = d?.url || (d?.b64_json ? `data:image/png;base64,${d.b64_json}` : null);
-        if (url) return url;
+        const b64 = d?.b64_json;
+        const url = d?.url;
+        if (b64) return `data:image/png;base64,${b64}`;
+        if (url)  return url;
       } catch (e) {
         lastImgErr = {
           model,
@@ -140,7 +142,7 @@ async function generateImageUrl(prompt) {
           message: e?.response?.data?.error?.message || e?.message || String(e),
         };
         console.error("[images]", lastImgErr);
-        if (lastImgErr.status === 403) break; // org-gated → next model
+        if (lastImgErr.status === 403) break; // org/key not allowed → try next model
         if (lastImgErr.status === 429 || /timeout|ECONNRESET|ETIMEDOUT/i.test(lastImgErr.message)) {
           await sleep(300 + Math.random()*200); continue;
         }
@@ -153,6 +155,15 @@ async function generateImageUrl(prompt) {
 
 // Diagnostics
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
+app.get("/diag/env", (_req,res) => {
+  res.json({
+    has_OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
+    has_OPENAI_ORG_ID:  Boolean(process.env.OPENAI_ORG_ID),
+    has_SPOTIFY_ID:     Boolean(process.env.SPOTIFY_CLIENT_ID),
+    has_SPOTIFY_SECRET: Boolean(process.env.SPOTIFY_CLIENT_SECRET),
+    node: process.version,
+  });
+});
 
 // --- Routes ---
 app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
@@ -170,7 +181,6 @@ app.get("/api/trend", async (req, res) => {
     const list = await loadTrending({ market, storefront });
     if (!list.length) throw new Error("No trends available");
 
-    // pick & avoid repeat
     let pick = list[Math.floor(Math.random() * list.length)];
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
     if (key === lastKey && list.length > 1) {
@@ -187,7 +197,7 @@ app.get("/api/trend", async (req, res) => {
       artist: pick.artist,
       description: pick.desc || "Trending right now.",
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
-      image: imageUrl,             // https://... or data:image/...
+      image: imageUrl,   // https://... or data:image/...
       count: imageCount,
     });
   } catch (err) {
@@ -206,4 +216,7 @@ app.get("/api/trend", async (req, res) => {
 
 // --- Start
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`323drop live backend on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`323drop live backend on :${PORT}`);
+  console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID);
+});
