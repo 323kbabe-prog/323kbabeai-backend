@@ -1,4 +1,4 @@
-// server.js — Info Set v1.2 KV Mirror (safe, with lyrics-finder)
+// server.js — Info Set v1.2 KV Mirror (safe, with lyrics + images)
 
 import express from "express";
 import cors from "cors";
@@ -10,13 +10,18 @@ import lyricsFinder from "lyrics-finder";
 const app = express();
 
 /* ---------------- CORS ---------------- */
-const ALLOW = (process.env.CORS_ALLOW || "https://1ai323.ai,https://www.1ai323.ai")
-  .split(",").map(s=>s.trim()).filter(Boolean);
+let ALLOW = [];
+if (process.env.CORS_ALLOW) {
+  ALLOW = process.env.CORS_ALLOW.split(",").map(s => s.trim()).filter(Boolean);
+}
 
 app.use(cors({
-  origin: (origin, cb) => (!origin || ALLOW.includes(origin)) 
-    ? cb(null, true) 
-    : cb(new Error("CORS: origin not allowed")),
+  origin: (origin, cb) => {
+    // Default: allow all if no CORS_ALLOW set
+    if (!process.env.CORS_ALLOW) return cb(null, true);
+    if (!origin || ALLOW.includes(origin)) return cb(null, true);
+    return cb(new Error("CORS: origin not allowed"));
+  },
   methods: ["GET","OPTIONS"],
   allowedHeaders: ["Content-Type"],
   maxAge: 86400,
@@ -78,6 +83,58 @@ async function searchLyrics({title,artist}){
     console.error("lyrics error:", e.message);
     return "Lyrics not available.";
   }
+}
+
+/* ---------------- Cover Search ---------------- */
+async function searchCover({title,artist}){
+  let cover=null;
+
+  // Spotify
+  try{
+    const token=await getSpotifyToken();
+    const u=new URL("https://api.spotify.com/v1/search");
+    u.searchParams.set("q",`track:${title} artist:${artist}`);
+    u.searchParams.set("type","track"); u.searchParams.set("limit","1");
+    const r=await fetch(u,{headers:{Authorization:`Bearer ${token}`}});
+    const j=await r.json(); cover=j?.tracks?.items?.[0]?.album?.images?.[0]?.url||null;
+  }catch{}
+
+  // Apple
+  if(!cover){
+    try{
+      const it=new URL("https://itunes.apple.com/search");
+      it.searchParams.set("term",`${title} ${artist}`);
+      it.searchParams.set("entity","song"); it.searchParams.set("limit","1");
+      const rr=await fetch(it); const jj=await rr.json();
+      const a=jj.results?.[0]?.artworkUrl100;
+      cover=a? a.replace("100x100bb","1000x1000bb"):null;
+    }catch{}
+  }
+
+  // MusicBrainz
+  if(!cover){
+    try{
+      const search=await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(title)}+artist:${encodeURIComponent(artist)}&fmt=json`);
+      const mb=await search.json();
+      const release=mb.recordings?.[0]?.releases?.[0]?.id;
+      if(release) cover=`https://coverartarchive.org/release/${release}/front-500.jpg`;
+    }catch{}
+  }
+
+  // Fallback
+  if(!cover){
+    cover="data:image/svg+xml;base64,"+Buffer.from(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop stop-color="#ff66cc" offset="0%"/>
+          <stop stop-color="#00ccff" offset="100%"/>
+        </linearGradient></defs>
+        <rect width="1024" height="1024" fill="url(#g)"/>
+      </svg>
+    `).toString("base64");
+  }
+
+  return cover;
 }
 
 /* ---------------- Palette + Prompt Helpers ---------------- */
@@ -171,7 +228,9 @@ app.get("/api/trend-kv", async (req,res)=>{
 
     send("status",{msg:`Selected: ${pick.title} by ${pick.artist}`});
 
-    const palette=[]; // skip cover palette for now
+    const cover=await searchCover(pick); send("cover",{url:cover});
+    const palette=cover?await extractPaletteHexes(cover,6):[];
+
     const lyrics=await searchLyrics(pick);
     send("lyrics",{text:lyrics});
 
