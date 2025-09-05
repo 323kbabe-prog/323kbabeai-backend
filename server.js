@@ -30,6 +30,10 @@ let lastImgErr = null;
 let trendingCache = { data: [], expires: 0 };
 let spotifyTokenCache = { token: null, expires: 0 };
 
+// --- Newest-first state ---
+let trendIndex = 0;
+let trendList = [];
+
 /* ---------------- Helpers ---------------- */
 const shuffle = (a) => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const dedupeByKey = (items) => {
@@ -321,6 +325,24 @@ async function getImageWithFallback(pick, prompt) {
   return neonSvgPlaceholder(`${pick.title}|${pick.artist}`);
 }
 
+async function nextNewestPick({ market = "US", storefront = "us" } = {}) {
+  const list = await loadTrending({ market, storefront });
+
+  if (!trendList.length) {
+    trendList = dedupeByKey([...list]); // newest→oldest
+    trendIndex = 0;
+  }
+
+  if (trendIndex >= trendList.length) {
+    trendList = dedupeByKey([...list]);
+    trendIndex = 0;
+  }
+
+  const pick = trendList[trendIndex];
+  trendIndex++;
+  return pick;
+}
+
 /* ---------------- Diagnostics ---------------- */
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/diag/env", (_req,res) => res.json({
@@ -357,7 +379,7 @@ data: ${JSON.stringify(data)}
     send("status", { msg: "fetching live trends…" });
     const market = String(req.query.market || "US").toUpperCase();
     const list = await loadTrending({ market, storefront: "us" });
-    pick = list[Math.floor(Math.random() * list.length)];
+    pick = await nextNewestPick({ market });
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
     if (key === lastKey && list.length > 1) {
       pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
@@ -409,7 +431,7 @@ app.get("/api/trend", async (req, res) => {
   try {
     const market = String(req.query.market || "US").toUpperCase();
     const list = await loadTrending({ market, storefront: "us" });
-    let pick = list[Math.floor(Math.random() * list.length)];
+    let pick = await nextNewestPick({ market });
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
     if (key === lastKey && list.length > 1) {
       pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
@@ -455,3 +477,4 @@ app.listen(PORT, () => {
   console.log(`323drop live backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
 });
+
