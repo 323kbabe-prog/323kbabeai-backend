@@ -254,6 +254,29 @@ app.get("/api/trend", async (_req, res) => {
   }
 });
 
+
+/* ---------------- Voice (TTS) ---------------- */
+app.get("/api/voice", async (req, res) => {
+  try {
+    const text = req.query.text || "";
+    if (!text) return res.status(400).json({ error: "Missing text" });
+
+    const out = await openai.audio.speech.create({
+      model: "gpt-4o-mini-tts",
+      voice: "alloy", // can be changed to "verse", "sage", etc.
+      input: text,
+    });
+
+    const buffer = Buffer.from(await out.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(buffer);
+  } catch (e) {
+    console.error("[voice]", e.message);
+    res.status(500).json({ error: "TTS failed" });
+  }
+});
+
+
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
