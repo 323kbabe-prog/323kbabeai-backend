@@ -27,6 +27,9 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 
+/* ---------------- Cache ---------------- */
+const imageCache = new Map(); // key: title|artist|style → url
+
 /* ---------------- Gen‑Z fans style system ---------------- */
 const STYLE_PRESETS = {
   "stan-photocard": {
@@ -99,21 +102,6 @@ function makeFirstPersonDescription(title, artist) {
 }
 
 /* ---------------- Sanitize titles/artists for image prompt ---------------- */
-
-/* ---------------- Gender & Voice helpers ---------------- */
-function genderFromArtist(artist = "") {
-  const lower = artist.toLowerCase();
-  if (["ariana","sabrina","doja","rihanna","beyonce","taylor"].some(n => lower.includes(n))) return "female";
-  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "male";
-  return "neutral";
-}
-function chooseVoice(artist = "") {
-  const lower = artist.toLowerCase();
-  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; // young female
-  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  // young male
-  return "alloy"; // fallback neutral
-}
-
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
@@ -159,7 +147,7 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
-    "The performer should appear as a young " + genderFromArtist(artist) + " Korean idol (Gen-Z style).",
+    "The performer must always appear Korean, styled like a young K-pop idol (inspired by fan culture visuals).",
     ...s.tags.map(t => `• ${t}`),
     ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
     ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
@@ -167,26 +155,30 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
 }
 
 /* ---------------- Image generation + fallbacks ---------------- */
-async function generateImageUrl(prompt) {
-  const models = ["gpt-image-1", "dall-e-3"];
-  for (const model of models) {
-    try {
-      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
-      const d = out?.data?.[0];
-      const b64 = d?.b64_json;
-      const url = d?.url;
-      if (b64) return `data:image/png;base64,${b64}`;
-      if (url)  return url;
-    } catch (e) {
-      lastImgErr = {
-        model,
-        status: e?.status || e?.response?.status || null,
-        message: e?.response?.data?.error?.message || e?.message || String(e),
-      };
-      console.error("[images]", lastImgErr);
-    }
+async function generateImageUrl(prompt, cacheKey) {
+  if (imageCache.has(cacheKey)) {
+    return imageCache.get(cacheKey); // ✅ serve cached instantly
   }
-  return null;
+  try {
+    const out = await openai.images.generate({
+      model: "gpt-image-1",    // ✅ only use fast model
+      prompt,
+      size: "512x512",         // ✅ smaller image
+      response_format: "b64_json"
+    });
+    const d = out?.data?.[0];
+    const b64 = d?.b64_json;
+    const url = d?.url;
+    const result = b64 ? `data:image/png;base64,${b64}` : url;
+    if (result) {
+      imageCache.set(cacheKey, result); // ✅ cache for later
+    }
+    return result;
+  } catch (e) {
+    lastImgErr = { model: "gpt-image-1", message: e.message };
+    console.error("[images]", lastImgErr);
+    return null;
+  }
 }
 
 /* ---------------- Diagnostics ---------------- */
@@ -217,7 +209,8 @@ app.get("/api/trend-stream", async (req, res) => {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
     send("status", { msg: "generating image…" });
-    const imageUrl = await generateImageUrl(prompt);
+    const cacheKey = `${pick.title}|${pick.artist}|${styleKey}`;
+    const imageUrl = await generateImageUrl(prompt, cacheKey);
     if (lastImgErr) send("diag", lastImgErr);
 
     send("trend", pick);
@@ -246,7 +239,8 @@ app.get("/api/trend", async (_req, res) => {
   try {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
-    const imageUrl = await generateImageUrl(prompt);
+    const cacheKey = `${pick.title}|${pick.artist}|${styleKey}`;
+    const imageUrl = await generateImageUrl(prompt, cacheKey);
     if (imageUrl) imageCount += 1;
 
     res.json({
@@ -278,7 +272,7 @@ app.get("/api/voice", async (req, res) => {
 
     const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: chooseVoice(req.query.artist || ""), // can be changed to "verse", "sage", etc.
+      voice: "alloy", // can be changed to "verse", "sage", etc.
       input: text,
     });
 
