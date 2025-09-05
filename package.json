@@ -1,9 +1,8 @@
 {
-  "name": "info-set-v1_2-kv",
-  "version": "1.2.0",
+  "name": "three23kbabeai-backend",
+  "version": "2.2.0",
   "private": true,
   "main": "server.js",
-  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
@@ -14,10 +13,6 @@
     "express": "^4.19.2",
     "cors": "^2.8.5",
     "openai": "^4.48.1",
-    "undici": "^6.19.8",
-    "node-vibrant": "3.1.6",
-    "lyrics-finder": "^21.7.0",
-    "genius-lyrics": "^4.4.7",
-    "youtube-transcript": "^1.0.6"
+    "undici": "^6.19.8"
   }
 }
