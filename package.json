@@ -16,6 +16,6 @@
     "openai": "^4.48.1",
     "undici": "^6.19.8",
     "node-vibrant": "3.1.6",
-    "@southctrl/musixmatch-lyrics": "^1.0.7"
+    "lyrics-finder": "^21.7.0"
   }
 }
