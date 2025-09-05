@@ -1,12 +1,14 @@
-// server.js — Info Set v1.2 KV Mirror (safe, trending auto-pick with enhanced searchCover)
+// server.js — Info Set v1.2 KV Mirror (safe, with lyrics)
 
-const express = require("express");
-const cors = require("cors");
-const OpenAI = require("openai");
-const Vibrant = require("node-vibrant");
-const { fetch } = require("undici");
+import express from "express";
+import cors from "cors";
+import OpenAI from "openai";
+import Vibrant from "node-vibrant";
+import { fetch } from "undici";
+import MusixmatchLyrics from "@southctrl/musixmatch-lyrics";
 
 const app = express();
+const mxm = new MusixmatchLyrics();
 
 /* ---------------- CORS ---------------- */
 const ALLOW = (process.env.CORS_ALLOW || "https://1ai323.ai,https://www.1ai323.ai")
@@ -82,7 +84,7 @@ async function searchCover({title,artist}){
     const j=await r.json(); cover=j?.tracks?.items?.[0]?.album?.images?.[0]?.url||null;
   }catch{}
 
-  // 2. Apple iTunes
+  // 2. Apple
   if(!cover){
     try{
       const it=new URL("https://itunes.apple.com/search");
@@ -94,7 +96,7 @@ async function searchCover({title,artist}){
     }catch{}
   }
 
-  // 3. MusicBrainz / Cover Art Archive
+  // 3. MusicBrainz
   if(!cover){
     try{
       const search=await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(title)}+artist:${encodeURIComponent(artist)}&fmt=json`);
@@ -104,16 +106,7 @@ async function searchCover({title,artist}){
     }catch{}
   }
 
-  // 4. YouTube fallback
-  if(!cover && process.env.YOUTUBE_API_KEY){
-    try{
-      const yt=await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(title+" "+artist)}&key=${process.env.YOUTUBE_API_KEY}`);
-      const j=await yt.json();
-      cover=j.items?.[0]?.snippet?.thumbnails?.high?.url||null;
-    }catch{}
-  }
-
-  // 5. Default gradient fallback
+  // 4. Fallback gradient
   if(!cover){
     cover="data:image/svg+xml;base64,"+Buffer.from(`
       <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
@@ -127,6 +120,21 @@ async function searchCover({title,artist}){
   }
 
   return cover;
+}
+
+/* ---------------- Lyrics Search ---------------- */
+async function searchLyrics({title,artist}){
+  try{
+    const q=`${title} - ${artist}`;
+    const result=await mxm.getLrc(q);
+    if(result && (result.synced||result.unsynced)){
+      return result.synced || result.unsynced;
+    }
+    return null;
+  }catch(e){
+    console.error("lyrics error:",e?.message||e);
+    return null;
+  }
 }
 
 /* ---------------- Palette + Prompt Helpers ---------------- */
@@ -146,8 +154,6 @@ function buildKVPrompt({title,artist,sex,heritage,paletteHexes,audioCues}){
   return [
     `Create a photo-real editorial Key Visual for the song "${title}" by ${artist}.`,
     "Original face (no look-alike). 1:1 frame.",
-    ...(sex?[`present the subject as ${sex} in appearance and styling; respectful and natural`]:[]),
-    ...(heritage?[`depict the subject with ${heritage} heritage authentically; avoid stereotypes`]:[]),
     "KV-mirror cues (safe):",
     ...kvPoseSafe().map(t=>"• "+t),
     (paletteHexes?.length?`Palette from real cover: ${paletteHexes.join(", ")}`:""),
@@ -227,6 +233,9 @@ app.get("/api/trend-kv", async (req,res)=>{
     const palette=cover?await extractPaletteHexes(cover,6):[]; send("palette",{hex:palette});
     const cues=["auto-selected trending KV"];
     send("audio",{cues});
+
+    const lyrics=await searchLyrics(pick);
+    send("lyrics",{text:lyrics||"Lyrics not available."});
 
     const prompt=buildKVPrompt({title:pick.title,artist:pick.artist,sex:"same",heritage:"",paletteHexes:palette,audioCues:cues});
     const img=await generateImageUrl(prompt);
