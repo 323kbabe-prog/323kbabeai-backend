@@ -27,9 +27,6 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 
-/* ---------------- Cache ---------------- */
-const imageCache = new Map(); // key: title|artist|style → url
-
 /* ---------------- Gen‑Z fans style system ---------------- */
 const STYLE_PRESETS = {
   "stan-photocard": {
@@ -155,30 +152,26 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
 }
 
 /* ---------------- Image generation + fallbacks ---------------- */
-async function generateImageUrl(prompt, cacheKey) {
-  if (imageCache.has(cacheKey)) {
-    return imageCache.get(cacheKey); // ✅ serve cached instantly
-  }
-  try {
-    const out = await openai.images.generate({
-      model: "gpt-image-1",    // ✅ only use fast model
-      prompt,
-      size: "512x512",         // ✅ smaller image
-      response_format: "b64_json"
-    });
-    const d = out?.data?.[0];
-    const b64 = d?.b64_json;
-    const url = d?.url;
-    const result = b64 ? `data:image/png;base64,${b64}` : url;
-    if (result) {
-      imageCache.set(cacheKey, result); // ✅ cache for later
+async function generateImageUrl(prompt) {
+  const models = ["gpt-image-1", "dall-e-3"];
+  for (const model of models) {
+    try {
+      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
+      const d = out?.data?.[0];
+      const b64 = d?.b64_json;
+      const url = d?.url;
+      if (b64) return `data:image/png;base64,${b64}`;
+      if (url)  return url;
+    } catch (e) {
+      lastImgErr = {
+        model,
+        status: e?.status || e?.response?.status || null,
+        message: e?.response?.data?.error?.message || e?.message || String(e),
+      };
+      console.error("[images]", lastImgErr);
     }
-    return result;
-  } catch (e) {
-    lastImgErr = { model: "gpt-image-1", message: e.message };
-    console.error("[images]", lastImgErr);
-    return null;
   }
+  return null;
 }
 
 /* ---------------- Diagnostics ---------------- */
@@ -209,8 +202,7 @@ app.get("/api/trend-stream", async (req, res) => {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
     send("status", { msg: "generating image…" });
-    const cacheKey = `${pick.title}|${pick.artist}|${styleKey}`;
-    const imageUrl = await generateImageUrl(prompt, cacheKey);
+    const imageUrl = await generateImageUrl(prompt);
     if (lastImgErr) send("diag", lastImgErr);
 
     send("trend", pick);
@@ -234,14 +226,46 @@ app.get("/api/trend-stream", async (req, res) => {
   }
 });
 
-/* ---------------- JSON one-shot ---------------- */
-app.get("/api/trend", async (_req, res) => {
+
+/* ---------------- Prefetch ---------------- */
+let nextPrefetch = null;
+
+async function prefetchNext() {
   try {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
-    const cacheKey = `${pick.title}|${pick.artist}|${styleKey}`;
+    const cacheKey = `${pick.title}|${pick.artist}|${DEFAULT_STYLE}`;
     const imageUrl = await generateImageUrl(prompt, cacheKey);
+    if (imageUrl) {
+      nextPrefetch = { ...pick, image: imageUrl, cacheKey };
+      console.log("[prefetch] Cached next image:", pick.title, "by", pick.artist);
+    }
+  } catch (e) {
+    console.error("[prefetch failed]", e.message);
+    nextPrefetch = null;
+  }
+}
+
+/* ---------------- JSON one-shot ---------------- */
+app.get("/api/trend", async (_req, res) => {
+  try {
+    let pick, imageUrl, cacheKey;
+
+    if (nextPrefetch) {
+      ({ title: pickTitle, artist: pickArtist, desc, hashtags, image: imageUrl, cacheKey } = nextPrefetch);
+      pick = { title: pickTitle, artist: pickArtist, desc, hashtags };
+      nextPrefetch = null;
+    } else {
+      pick = await nextNewestPick();
+      const prompt = stylizedPrompt(pick.title, pick.artist);
+      cacheKey = `${pick.title}|${pick.artist}|${DEFAULT_STYLE}`;
+      imageUrl = await generateImageUrl(prompt, cacheKey);
+    }
+
     if (imageUrl) imageCount += 1;
+
+    // 🚀 Start background prefetch for the next one
+    prefetchNext();
 
     res.json({
       title: pick.title,
