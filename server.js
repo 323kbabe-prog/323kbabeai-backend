@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + First-person description + Safe prompt sanitization)
+// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + First-person description 50+ words + Safe prompt sanitization)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -86,14 +86,14 @@ const STYLE_PRESETS = {
 
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
-/* ---------------- First-person description helper ---------------- */
+/* ---------------- First-person description helper (50+ words) ---------------- */
 function makeFirstPersonDescription(title, artist) {
   const options = [
-    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal.`,
-    `When “${title}” comes on, I can’t help but stop scrolling and let it run. ${artist} really caught a wave with this one.`,
-    `I’ve had “${title}” by ${artist} stuck in my head all day. It feels like the soundtrack of this moment.`,
-    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up. ${artist} nailed the energy here.`,
-    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring.`
+    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. The melody sticks in my head like glue, and I can feel the energy pulsing through every beat. It makes me want to get up, move, and share it with everyone I know, because it really feels like a soundtrack to this exact moment in time.`,
+    `When “${title}” comes on, I can’t help but stop scrolling and let it run. ${artist} really caught a wave with this one. There’s something addictive about the rhythm, the way it shifts between intensity and flow. It feels like a perfect mix of confidence and emotion, and I swear I could loop it all day and not get tired.`,
+    `I’ve had “${title}” by ${artist} stuck in my head all day, and it’s not leaving anytime soon. The vocals wrap around me like a conversation with a close friend, and the beat feels alive. Every time the chorus hits, I get goosebumps, like I’m standing in the middle of a crowd singing it back word for word.`,
+    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up. ${artist} nailed the energy here. The sound is sharp, bold, and fearless, but it also has this soft undercurrent that makes it so personal. I love that it feels both viral and intimate at the same time, like it’s written for the world but also just for me.`,
+    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring. It’s wild how a song can instantly change the atmosphere of a room, making it brighter and louder. This one feels like a moment — not just music, but a movement that I want to carry with me everywhere and keep on repeat.`
   ];
   return options[Math.floor(Math.random() * options.length)];
 }
