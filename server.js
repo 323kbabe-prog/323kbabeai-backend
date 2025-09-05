@@ -1,4 +1,4 @@
-// server.js — Info Set v1.2 KV Mirror (safe, trending auto-pick with fixed image API)
+// server.js — Info Set v1.2 KV Mirror (safe, trending auto-pick with enhanced searchCover)
 
 const express = require("express");
 const cors = require("cors");
@@ -68,6 +68,110 @@ async function getAppleMostPlayed(storefront="us",limit=50){
   return (j.feed?.results||[]).map(x=>({title:x.name,artist:x.artistName}));
 }
 
+/* ---------------- Enhanced Cover Search ---------------- */
+async function searchCover({title,artist}){
+  let cover=null;
+
+  // 1. Spotify
+  try{
+    const token=await getSpotifyToken();
+    const u=new URL("https://api.spotify.com/v1/search");
+    u.searchParams.set("q",`track:${title} artist:${artist}`);
+    u.searchParams.set("type","track"); u.searchParams.set("limit","1");
+    const r=await fetch(u,{headers:{Authorization:`Bearer ${token}`}});
+    const j=await r.json(); cover=j?.tracks?.items?.[0]?.album?.images?.[0]?.url||null;
+  }catch{}
+
+  // 2. Apple iTunes
+  if(!cover){
+    try{
+      const it=new URL("https://itunes.apple.com/search");
+      it.searchParams.set("term",`${title} ${artist}`);
+      it.searchParams.set("entity","song"); it.searchParams.set("limit","1");
+      const rr=await fetch(it); const jj=await rr.json();
+      const a=jj.results?.[0]?.artworkUrl100;
+      cover=a? a.replace("100x100bb","1000x1000bb"):null;
+    }catch{}
+  }
+
+  // 3. MusicBrainz / Cover Art Archive
+  if(!cover){
+    try{
+      const search=await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(title)}+artist:${encodeURIComponent(artist)}&fmt=json`);
+      const mb=await search.json();
+      const release=mb.recordings?.[0]?.releases?.[0]?.id;
+      if(release) cover=`https://coverartarchive.org/release/${release}/front-500.jpg`;
+    }catch{}
+  }
+
+  // 4. YouTube fallback
+  if(!cover && process.env.YOUTUBE_API_KEY){
+    try{
+      const yt=await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(title+" "+artist)}&key=${process.env.YOUTUBE_API_KEY}`);
+      const j=await yt.json();
+      cover=j.items?.[0]?.snippet?.thumbnails?.high?.url||null;
+    }catch{}
+  }
+
+  // 5. Default gradient fallback
+  if(!cover){
+    cover="data:image/svg+xml;base64,"+Buffer.from(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop stop-color="#ff66cc" offset="0%"/>
+          <stop stop-color="#00ccff" offset="100%"/>
+        </linearGradient></defs>
+        <rect width="1024" height="1024" fill="url(#g)"/>
+      </svg>
+    `).toString("base64");
+  }
+
+  return cover;
+}
+
+/* ---------------- Palette + Prompt Helpers ---------------- */
+async function extractPaletteHexes(imageUrl,n=6){
+  try{ const res=await fetch(imageUrl); const buf=Buffer.from(await res.arrayBuffer());
+       const vib=await Vibrant.from(buf).getPalette();
+       return Object.values(vib).filter(Boolean).sort((a,b)=>b.population-a.population).map(sw=>sw.hex).slice(0,n);
+  }catch{return [];}
+}
+
+function kvPoseSafe(){ return [
+  "low-angle fashion pose on beige carpet against white curtain",
+  "subject kneeling in black dress; hair flip gesture; retro on-camera flash look; subtle film grain"
+];}
+
+function buildKVPrompt({title,artist,sex,heritage,paletteHexes,audioCues}){
+  return [
+    `Create a photo-real editorial Key Visual for the song "${title}" by ${artist}.`,
+    "Original face (no look-alike). 1:1 frame.",
+    ...(sex?[`present the subject as ${sex} in appearance and styling; respectful and natural`]:[]),
+    ...(heritage?[`depict the subject with ${heritage} heritage authentically; avoid stereotypes`]:[]),
+    "KV-mirror cues (safe):",
+    ...kvPoseSafe().map(t=>"• "+t),
+    (paletteHexes?.length?`Palette from real cover: ${paletteHexes.join(", ")}`:""),
+    "Audio cues:",...(audioCues||[]).map(c=>"• "+c),
+    "No text/logos/watermarks."
+  ].filter(Boolean).join(" ");
+}
+
+/* ---------------- Image Generator ---------------- */
+async function generateImageUrl(prompt){
+  try{
+    const out=await openai.images.generate({
+      model:"gpt-image-1",
+      prompt,
+      size:"1024x1024"
+    });
+    return out.data[0].url||null;
+  }catch(e){
+    console.error("[images]",e.message||e);
+    return null;
+  }
+}
+
+/* ---------------- Trending Loader ---------------- */
 async function loadTrending({ market="US", storefront="us" } = {}){
   const now=Date.now();
   if(trendingCache.data.length && now<trendingCache.expires) return trendingCache.data;
@@ -96,61 +200,6 @@ async function loadTrending({ market="US", storefront="us" } = {}){
   return trendingCache.data;
 }
 
-async function searchCover({title,artist}){
-  try{
-    const token=await getSpotifyToken();
-    const u=new URL("https://api.spotify.com/v1/search");
-    u.searchParams.set("q",`track:${title} artist:${artist}`);
-    u.searchParams.set("type","track"); u.searchParams.set("limit","1");
-    const r=await fetch(u,{headers:{Authorization:`Bearer ${token}`}});
-    const j=await r.json(); const t=j?.tracks?.items?.[0];
-    return t?.album?.images?.[0]?.url||null;
-  }catch{}
-  return null;
-}
-
-async function extractPaletteHexes(imageUrl,n=6){
-  try{ const res=await fetch(imageUrl); const buf=Buffer.from(await res.arrayBuffer());
-       const vib=await Vibrant.from(buf).getPalette();
-       return Object.values(vib).filter(Boolean).sort((a,b)=>b.population-a.population).map(sw=>sw.hex).slice(0,n);
-  }catch{return [];}
-}
-
-function kvPoseSafe(){ return [
-  "low-angle fashion pose on beige carpet against white curtain",
-  "subject kneeling in black dress; hair flip gesture; retro on-camera flash look; subtle film grain"
-];}
-
-function buildKVPrompt({title,artist,sex,heritage,paletteHexes,audioCues}){
-  return [
-    `Create a photo-real editorial Key Visual for the song "${title}" by ${artist}.`,
-    "Original face (no look-alike). 1:1 frame.",
-    ...(sex?[`present the subject as ${sex} in appearance and styling; respectful and natural`]:[]),
-    ...(heritage?[`depict the subject with ${heritage} heritage authentically; avoid stereotypes`]:[]),
-    "KV-mirror cues (safe):",
-    ...kvPoseSafe().map(t=>"• "+t),
-    (paletteHexes?.length?`Palette from real cover: ${paletteHexes.join(", ")}`:""),
-    "Audio cues:",...(audioCues||[]).map(c=>"• "+c),
-    "No text/logos/watermarks."
-  ].filter(Boolean).join(" ");
-}
-
-/* ---------------- Image generator (fixed) ---------------- */
-async function generateImageUrl(prompt){
-  try {
-    const out=await openai.images.generate({
-      model:"gpt-image-1",
-      prompt,
-      size:"1024x1024"
-    });
-    const url=out.data[0].url;
-    return url||null;
-  } catch(e) {
-    console.error("[images]",e.message||e);
-    return null;
-  }
-}
-
 /* ---------------- KV auto endpoint ---------------- */
 app.get("/api/trend-kv", async (req,res)=>{
   res.set({
@@ -166,7 +215,6 @@ app.get("/api/trend-kv", async (req,res)=>{
     const list=await loadTrending();
     if(!list.length) throw new Error("No trending tracks");
 
-    // pick different track each time
     let pick=list[Math.floor(Math.random()*list.length)];
     if(`${pick.title}::${pick.artist}`===lastPick && list.length>1){
       pick=list.find(x=>`${x.title}::${x.artist}`!==lastPick)||pick;
