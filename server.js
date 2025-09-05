@@ -138,12 +138,22 @@ async function nextNewestPick() {
 /* ---------------- Prompt builder (always Korean idol style + sanitized input) ---------------- */
 function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = []) {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
+  // Simple gender guess based on artist
+  const lower = artist.toLowerCase();
+  let genderNote = "The performer must always appear Korean, styled like a young K-pop idol.";
+  if (/(ariana|sabrina|doja|beyoncé|lady|girl|queen)/.test(lower)) {
+    genderNote = "The performer must always appear Korean, styled like a young female K-pop idol with sweet youthful features and soft expressions.";
+  } else if (/(justin|drake|kendrick|travis|jay|eminem|weeknd|nas)/.test(lower)) {
+    genderNote = "The performer must always appear Korean, styled like a young male K-pop idol with sharp features and confident energy.";
+  }
+
   return [
     `Create a high-impact, shareable cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
     `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
+    genderNote,
     "The performer must always appear Korean, styled like a young K-pop idol (inspired by fan culture visuals).",
     ...s.tags.map(t => `• ${t}`),
     ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
@@ -253,29 +263,6 @@ app.get("/api/trend", async (_req, res) => {
     });
   }
 });
-
-
-/* ---------------- Voice (TTS) ---------------- */
-app.get("/api/voice", async (req, res) => {
-  try {
-    const text = req.query.text || "";
-    if (!text) return res.status(400).json({ error: "Missing text" });
-
-    const out = await openai.audio.speech.create({
-      model: "gpt-4o-mini-tts",
-      voice: "alloy", // can be changed to "verse", "sage", etc.
-      input: text,
-    });
-
-    const buffer = Buffer.from(await out.arrayBuffer());
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(buffer);
-  } catch (e) {
-    console.error("[voice]", e.message);
-    res.status(500).json({ error: "TTS failed" });
-  }
-});
-
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
