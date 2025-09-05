@@ -1,20 +1,19 @@
 # .env.example for Info Set v1.2 — KV Mirror (safe)
 
-# Required: your OpenAI API key
+# 🔑 Required
 OPENAI_API_KEY=sk-xxxx
 
-# Optional: Spotify keys if you want audio features
+# 🎵 Optional (for Spotify audio features)
 #SPOTIFY_CLIENT_ID=your_spotify_client_id
 #SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 
-# Domains allowed to connect to backend
+# 🌐 Domains allowed to call your backend
+# Add both your live domain and "www." version to prevent CORS errors
 CORS_ALLOW=https://1ai323.ai,https://www.1ai323.ai
 
-# Default art style
+# 🎨 Default rendering options
 DEFAULT_ART=film-editorial
-
-# Default fan style (if needed for portrait mode)
 DEFAULT_STYLE=stan-photocard
 
-# Port (Render will set automatically, but keep for local dev)
+# 🚪 Port (Render will override, but keep for local testing)
 PORT=10000
