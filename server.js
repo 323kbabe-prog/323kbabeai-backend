@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + First-person description)
+// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + First-person description + Safe prompt sanitization)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -98,6 +98,11 @@ function makeFirstPersonDescription(title, artist) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
+/* ---------------- Sanitize titles/artists for image prompt ---------------- */
+function cleanForPrompt(str = "") {
+  return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
+}
+
 /* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
@@ -130,11 +135,11 @@ async function nextNewestPick() {
   }
 }
 
-/* ---------------- Prompt builder (always Korean idol style) ---------------- */
+/* ---------------- Prompt builder (always Korean idol style + sanitized input) ---------------- */
 function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = []) {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
-    `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
+    `Create a high-impact, shareable cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
     `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
