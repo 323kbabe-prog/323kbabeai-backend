@@ -182,6 +182,20 @@ async function getAppleMostPlayed(storefront = "us", limit = 50) {
     hashtags: ["#Trending","#AppleMusic"],
   }));
 }
+async function loadTrending({ market = "US", storefront = "us" } = {}) {
+  const now = Date.now();
+  if (trendingCache.data.length && now < trendingCache.expires) return trendingCache.data;
+  const TOP50_GLOBAL = "37i9dQZEVXbMDoHDwVN2tF";
+  const VIRAL50_GLOBAL = "37i9dQZEVXbLiRSasKsNU9";
+  let items = [];
+  try {
+    const [top50, viral50, apple] = await Promise.all([
+      getSpotifyPlaylistTracks(TOP50_GLOBAL, market, 50),
+      getSpotifyPlaylistTracks(VIRAL50_GLOBAL, market, 50),
+      getAppleMostPlayed(storefront, 50),
+    ]);
+    items = [...top50, ...viral50, ...apple];
+  } catch (e) { console.error("Trending sources error:", e?.message || e); }
 
   if (!items.length) {
     items = [
@@ -339,39 +353,6 @@ async function nextNewestPick({ market = "US", storefront = "us" } = {}) {
   trendIndex++;
   return pick;
 }
-
-
-/* ---------------- GPT-based TikTok trending fetch ---------------- */
-async function fetchTikTokTrending() {
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a music trend parser." },
-        { role: "user", content: "Give me the top 15 songs currently trending on TikTok. Reply in JSON with fields: title, artist." }
-      ]
-    });
-    const text = completion.choices[0].message.content;
-    const parsed = JSON.parse(text);
-    return parsed.map(x => ({
-      title: x.title,
-      artist: x.artist,
-      desc: "Trending on TikTok.",
-      hashtags: ["#TikTokTrend", "#ForYouPage"]
-    }));
-  } catch (e) {
-    console.error("GPT trending fetch failed:", e.message || e);
-    return [
-      { title: "Fallback Song", artist: "TikTok Artist", desc: "Fallback trending.", hashtags: ["#TikTok"] }
-    ];
-  }
-}
-
-async function loadTrending() {
-  const items = await fetchTikTokTrending();
-  return dedupeByKey(items);
-}
-
 
 /* ---------------- Diagnostics ---------------- */
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
