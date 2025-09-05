@@ -1,14 +1,13 @@
-// server.js — Info Set v1.2 KV Mirror (safe, with lyrics)
+// server.js — Info Set v1.2 KV Mirror (safe, with lyrics-finder)
 
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 import Vibrant from "node-vibrant";
 import { fetch } from "undici";
-import MusixmatchLyrics from "@southctrl/musixmatch-lyrics";
+import lyricsFinder from "lyrics-finder";
 
 const app = express();
-const mxm = new MusixmatchLyrics();
 
 /* ---------------- CORS ---------------- */
 const ALLOW = (process.env.CORS_ALLOW || "https://1ai323.ai,https://www.1ai323.ai")
@@ -70,70 +69,14 @@ async function getAppleMostPlayed(storefront="us",limit=50){
   return (j.feed?.results||[]).map(x=>({title:x.name,artist:x.artistName}));
 }
 
-/* ---------------- Enhanced Cover Search ---------------- */
-async function searchCover({title,artist}){
-  let cover=null;
-
-  // 1. Spotify
-  try{
-    const token=await getSpotifyToken();
-    const u=new URL("https://api.spotify.com/v1/search");
-    u.searchParams.set("q",`track:${title} artist:${artist}`);
-    u.searchParams.set("type","track"); u.searchParams.set("limit","1");
-    const r=await fetch(u,{headers:{Authorization:`Bearer ${token}`}});
-    const j=await r.json(); cover=j?.tracks?.items?.[0]?.album?.images?.[0]?.url||null;
-  }catch{}
-
-  // 2. Apple
-  if(!cover){
-    try{
-      const it=new URL("https://itunes.apple.com/search");
-      it.searchParams.set("term",`${title} ${artist}`);
-      it.searchParams.set("entity","song"); it.searchParams.set("limit","1");
-      const rr=await fetch(it); const jj=await rr.json();
-      const a=jj.results?.[0]?.artworkUrl100;
-      cover=a? a.replace("100x100bb","1000x1000bb"):null;
-    }catch{}
-  }
-
-  // 3. MusicBrainz
-  if(!cover){
-    try{
-      const search=await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(title)}+artist:${encodeURIComponent(artist)}&fmt=json`);
-      const mb=await search.json();
-      const release=mb.recordings?.[0]?.releases?.[0]?.id;
-      if(release) cover=`https://coverartarchive.org/release/${release}/front-500.jpg`;
-    }catch{}
-  }
-
-  // 4. Fallback gradient
-  if(!cover){
-    cover="data:image/svg+xml;base64,"+Buffer.from(`
-      <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
-        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-          <stop stop-color="#ff66cc" offset="0%"/>
-          <stop stop-color="#00ccff" offset="100%"/>
-        </linearGradient></defs>
-        <rect width="1024" height="1024" fill="url(#g)"/>
-      </svg>
-    `).toString("base64");
-  }
-
-  return cover;
-}
-
 /* ---------------- Lyrics Search ---------------- */
 async function searchLyrics({title,artist}){
-  try{
-    const q=`${title} - ${artist}`;
-    const result=await mxm.getLrc(q);
-    if(result && (result.synced||result.unsynced)){
-      return result.synced || result.unsynced;
-    }
-    return null;
-  }catch(e){
-    console.error("lyrics error:",e?.message||e);
-    return null;
+  try {
+    const lyrics = await lyricsFinder(artist, title);
+    return lyrics || "Lyrics not available.";
+  } catch(e) {
+    console.error("lyrics error:", e.message);
+    return "Lyrics not available.";
   }
 }
 
@@ -150,14 +93,13 @@ function kvPoseSafe(){ return [
   "subject kneeling in black dress; hair flip gesture; retro on-camera flash look; subtle film grain"
 ];}
 
-function buildKVPrompt({title,artist,sex,heritage,paletteHexes,audioCues}){
+function buildKVPrompt({title,artist,paletteHexes}){
   return [
     `Create a photo-real editorial Key Visual for the song "${title}" by ${artist}.`,
     "Original face (no look-alike). 1:1 frame.",
     "KV-mirror cues (safe):",
     ...kvPoseSafe().map(t=>"• "+t),
     (paletteHexes?.length?`Palette from real cover: ${paletteHexes.join(", ")}`:""),
-    "Audio cues:",...(audioCues||[]).map(c=>"• "+c),
     "No text/logos/watermarks."
   ].filter(Boolean).join(" ");
 }
@@ -228,16 +170,12 @@ app.get("/api/trend-kv", async (req,res)=>{
     lastPick=`${pick.title}::${pick.artist}`;
 
     send("status",{msg:`Selected: ${pick.title} by ${pick.artist}`});
-    const cover=await searchCover(pick); send("cover",{url:cover});
 
-    const palette=cover?await extractPaletteHexes(cover,6):[]; send("palette",{hex:palette});
-    const cues=["auto-selected trending KV"];
-    send("audio",{cues});
-
+    const palette=[]; // skip cover palette for now
     const lyrics=await searchLyrics(pick);
-    send("lyrics",{text:lyrics||"Lyrics not available."});
+    send("lyrics",{text:lyrics});
 
-    const prompt=buildKVPrompt({title:pick.title,artist:pick.artist,sex:"same",heritage:"",paletteHexes:palette,audioCues:cues});
+    const prompt=buildKVPrompt({title:pick.title,artist:pick.artist,paletteHexes:palette});
     const img=await generateImageUrl(prompt);
 
     if(img){ send("image",{src:img}); send("end",{ok:true}); }
