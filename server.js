@@ -1,4 +1,4 @@
-// server.js — 323drop Live with Status + Voice
+// server.js — 323drop Live with Voice Support
 const express = require("express");
 const cors = require("cors");
 const OpenAI = require("openai");
@@ -20,44 +20,14 @@ const openai = new OpenAI({
 });
 
 let imageCount = 0;
-let lastSong = null;
+let lastImgErr = null;
 
-/* ----------- First-person description helper ----------- */
+/* ---------------- First-person description helper ---------------- */
 function makeFirstPersonDescription(title, artist) {
   return `I just played “${title}” by ${artist} and the vibe is unreal. The melody sticks in my head like glue, and I can feel the energy pulsing through every beat. It makes me want to move and share it with everyone, because it really feels like a soundtrack to this exact moment.`;
 }
 
-/* ----------- Song picker (avoid last one) ----------- */
-async function nextNewestPick() {
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      temperature: 1.1,
-      messages: [
-        { role: "system", content: "You are a music trend parser." },
-        {
-          role: "user",
-          content: lastSong
-            ? `Pick ONE current trending song (Spotify or TikTok). It must be DIFFERENT from "${lastSong.title}" by ${lastSong.artist}. Reply ONLY as JSON { "title": "...", "artist": "..." }.`
-            : `Pick ONE current trending song (Spotify or TikTok). Reply ONLY as JSON { "title": "...", "artist": "..." }.`
-        }
-      ]
-    });
-    const text = completion.choices[0].message.content || "{}";
-    let pick = JSON.parse(text);
-    lastSong = { title: pick.title, artist: pick.artist };
-    return {
-      title: pick.title,
-      artist: pick.artist,
-      desc: makeFirstPersonDescription(pick.title, pick.artist),
-      hashtags: ["#NowPlaying", "#AIFavorite"]
-    };
-  } catch (e) {
-    return { title: "Fallback Song", artist: "AI DJ", desc: "Fallback vibe.", hashtags: ["#AI"] };
-  }
-}
-
-/* ----------- Generate voice with TTS ----------- */
+/* ---------------- Voice generation ---------------- */
 async function generateVoice(desc) {
   try {
     const response = await openai.audio.speech.create({
@@ -73,7 +43,30 @@ async function generateVoice(desc) {
   }
 }
 
-/* ----------- API endpoint ----------- */
+/* ---------------- Pick + prompt (simplified for demo) ---------------- */
+async function nextNewestPick() {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are a music trend parser." },
+        { role: "user", content: "Pick ONE current trending song (Spotify or TikTok). Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }." }
+      ]
+    });
+    const text = completion.choices[0].message.content || "{}";
+    let pick = JSON.parse(text);
+    return {
+      title: pick.title,
+      artist: pick.artist,
+      desc: makeFirstPersonDescription(pick.title, pick.artist),
+      hashtags: ["#NowPlaying", "#AIFavorite"]
+    };
+  } catch (e) {
+    return { title: "Fallback Song", artist: "AI DJ", desc: "Fallback vibe.", hashtags: ["#AI"] };
+  }
+}
+
+/* ---------------- API endpoint with voice ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
     const pick = await nextNewestPick();
@@ -83,7 +76,7 @@ app.get("/api/trend", async (_req, res) => {
       artist: pick.artist,
       description: pick.desc,
       hashtags: pick.hashtags,
-      image: null, // skipping image for this demo
+      image: null, // image left out for brevity
       voice: voiceUrl,
       count: ++imageCount
     });
@@ -93,4 +86,4 @@ app.get("/api/trend", async (_req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`323drop with status+voice on :${PORT}`));
+app.listen(PORT, () => console.log(`323drop with voice support on :${PORT}`));
