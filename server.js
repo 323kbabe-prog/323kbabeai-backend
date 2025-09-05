@@ -1,4 +1,4 @@
-// server.js — Info Set v1.2 (KV-mirror safe with /api/trend-kv)
+// server.js — Info Set v1.2 KV Mirror (safe, trending auto-pick)
 
 const express = require("express");
 const cors = require("cors");
@@ -10,7 +10,7 @@ const app = express();
 
 /* ---------------- CORS ---------------- */
 const ALLOW = (process.env.CORS_ALLOW || "https://1ai323.ai,https://www.1ai323.ai")
-  .split(",").map(s => s.trim()).filter(Boolean);
+  .split(",").map(s=>s.trim()).filter(Boolean);
 
 app.use(cors({
   origin: (origin, cb) => (!origin || ALLOW.includes(origin)) 
@@ -27,44 +27,93 @@ const openai = new OpenAI({
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {})
 });
 
+/* ---------------- State ---------------- */
+let trendingCache = { data: [], expires: 0 };
+let lastPick = "";
+
 /* ---------------- Helpers ---------------- */
+function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
+function dedupe(items){ const seen=new Set(); return items.filter(x=>{ const key=`${(x.title||"").toLowerCase()}::${(x.artist||"").toLowerCase()}`; if(seen.has(key)) return false; seen.add(key); return true; }); }
+
 async function getSpotifyToken(){
   const id=process.env.SPOTIFY_CLIENT_ID, secret=process.env.SPOTIFY_CLIENT_SECRET;
   if(!id||!secret) throw new Error("Missing Spotify credentials");
   const body=new URLSearchParams({grant_type:"client_credentials"}).toString();
   const r=await fetch("https://accounts.spotify.com/api/token",{
     method:"POST",
-    headers:{
-      Authorization:"Basic "+Buffer.from(`${id}:${secret}`).toString("base64"),
-      "Content-Type":"application/x-www-form-urlencoded"
-    },
+    headers:{ Authorization:"Basic "+Buffer.from(`${id}:${secret}`).toString("base64"),
+              "Content-Type":"application/x-www-form-urlencoded" },
     body
   });
   const j=await r.json(); return j.access_token;
 }
 
-async function searchCover({title,artist}){
+async function getSpotifyPlaylistTracks(playlistId, market="US", limit=50){
+  const token=await getSpotifyToken();
+  const url=new URL(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`);
+  url.searchParams.set("market",market); url.searchParams.set("limit",String(limit));
+  const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});
+  if(!r.ok) throw new Error(`Spotify ${r.status}`);
+  const j=await r.json();
+  return (j.items||[]).map(it=>it.track).filter(Boolean).map(tr=>({
+    title:tr.name,
+    artist:(tr.artists||[]).map(a=>a.name).join(", "),
+  }));
+}
+
+async function getAppleMostPlayed(storefront="us",limit=50){
+  const url=`https://rss.applemarketingtools.com/api/v2/${storefront}/music/most-played/${limit}/songs.json`;
+  const r=await fetch(url); if(!r.ok) return [];
+  const j=await r.json();
+  return (j.feed?.results||[]).map(x=>({title:x.name,artist:x.artistName}));
+}
+
+async function loadTrending({ market="US", storefront="us" } = {}){
+  const now=Date.now();
+  if(trendingCache.data.length && now<trendingCache.expires) return trendingCache.data;
+
+  const TOP50="37i9dQZEVXbMDoHDwVN2tF";
+  const VIRAL50="37i9dQZEVXbLiRSasKsNU9";
+  let items=[];
   try {
+    const [top50, viral50, apple]=await Promise.all([
+      getSpotifyPlaylistTracks(TOP50, market, 50),
+      getSpotifyPlaylistTracks(VIRAL50, market, 50),
+      getAppleMostPlayed(storefront,50)
+    ]);
+    items=[...top50,...viral50,...apple];
+  } catch(e){ console.error("Trending error:",e.message); }
+
+  if(!items.length){
+    items=[
+      {title:"Espresso",artist:"Sabrina Carpenter"},
+      {title:"Birds of a Feather",artist:"Billie Eilish"},
+      {title:"Not Like Us",artist:"Kendrick Lamar"}
+    ];
+  }
+
+  trendingCache={ data: shuffle(dedupe(items)), expires: now+8*60*1000 };
+  return trendingCache.data;
+}
+
+async function searchCover({title,artist}){
+  try{
     const token=await getSpotifyToken();
     const u=new URL("https://api.spotify.com/v1/search");
     u.searchParams.set("q",`track:${title} artist:${artist}`);
     u.searchParams.set("type","track"); u.searchParams.set("limit","1");
-    const r=await fetch(u,{headers:{Authorization:`Bearer ${token}`}}); 
-    const j=await r.json(); 
-    const t=j?.tracks?.items?.[0]; 
-    return t?.album?.images?.[0]?.url || null;
-  } catch { return null; }
+    const r=await fetch(u,{headers:{Authorization:`Bearer ${token}`}});
+    const j=await r.json(); const t=j?.tracks?.items?.[0];
+    return t?.album?.images?.[0]?.url||null;
+  }catch{}
+  return null;
 }
 
 async function extractPaletteHexes(imageUrl,n=6){
-  try {
-    const res=await fetch(imageUrl); 
-    const buf=Buffer.from(await res.arrayBuffer());
-    const vib=await Vibrant.from(buf).getPalette();
-    return Object.values(vib).filter(Boolean)
-      .sort((a,b)=>b.population-a.population)
-      .map(sw=>sw.hex).slice(0,n);
-  } catch { return []; }
+  try{ const res=await fetch(imageUrl); const buf=Buffer.from(await res.arrayBuffer());
+       const vib=await Vibrant.from(buf).getPalette();
+       return Object.values(vib).filter(Boolean).sort((a,b)=>b.population-a.population).map(sw=>sw.hex).slice(0,n);
+  }catch{return [];}
 }
 
 function kvPoseSafe(){ return [
@@ -76,17 +125,16 @@ function buildKVPrompt({title,artist,sex,heritage,paletteHexes,audioCues}){
   return [
     `Create a photo-real editorial Key Visual for the song "${title}" by ${artist}.`,
     "Original face (no look-alike). 1:1 frame.",
-    ...(sex? [`present the subject as ${sex} in appearance and styling; respectful and natural`] : []),
-    ...(heritage? [`depict the subject with ${heritage} heritage authentically; avoid stereotypes`] : []),
+    ...(sex?[`present the subject as ${sex} in appearance and styling; respectful and natural`]:[]),
+    ...(heritage?[`depict the subject with ${heritage} heritage authentically; avoid stereotypes`]:[]),
     "KV-mirror cues (safe):",
     ...kvPoseSafe().map(t=>"• "+t),
-    (paletteHexes?.length? `Palette from real cover: ${paletteHexes.join(", ")}`:""),
-    "Audio cues:", ...(audioCues||[]).map(c=>"• "+c),
+    (paletteHexes?.length?`Palette from real cover: ${paletteHexes.join(", ")}`:""),
+    "Audio cues:",...(audioCues||[]).map(c=>"• "+c),
     "No text/logos/watermarks."
   ].filter(Boolean).join(" ");
 }
 
-/* ---------------- Image generator ---------------- */
 async function generateImageUrl(prompt){
   const out=await openai.images.generate({model:"gpt-image-1",prompt,size:"1024x1024",response_format:"b64_json"});
   const b64=out?.data?.[0]?.b64_json;
@@ -105,21 +153,24 @@ app.get("/api/trend-kv", async (req,res)=>{
   const hb=setInterval(()=>res.write(":hb\n\n"),15000);
 
   try {
-    // Example trending pick (replace with Spotify/Apple trending logic)
-    const title="Tears", artist="Sabrina Carpenter";
-    const sex="same"; const heritage="";
+    const list=await loadTrending();
+    if(!list.length) throw new Error("No trending tracks");
 
-    send("status",{msg:"searching cover…"});
-    const cover=await searchCover({title,artist}); send("cover",{url:cover});
+    // pick different track each time
+    let pick=list[Math.floor(Math.random()*list.length)];
+    if(`${pick.title}::${pick.artist}`===lastPick && list.length>1){
+      pick=list.find(x=>`${x.title}::${x.artist}`!==lastPick)||pick;
+    }
+    lastPick=`${pick.title}::${pick.artist}`;
 
-    send("status",{msg:"extracting palette…"});
+    send("status",{msg:`Selected: ${pick.title} by ${pick.artist}`});
+    const cover=await searchCover(pick); send("cover",{url:cover});
+
     const palette=cover?await extractPaletteHexes(cover,6):[]; send("palette",{hex:palette});
+    const cues=["auto-selected trending KV"];
+    send("audio",{cues});
 
-    const audioCues=["soft key lighting","warm optimistic tone"];
-    send("audio",{cues:audioCues});
-
-    send("status",{msg:"rendering KV…"});
-    const prompt=buildKVPrompt({title,artist,sex,heritage,paletteHexes:palette,audioCues});
+    const prompt=buildKVPrompt({title:pick.title,artist:pick.artist,sex:"same",heritage:"",paletteHexes:palette,audioCues:cues});
     const img=await generateImageUrl(prompt);
 
     if(img){ send("image",{src:img}); send("end",{ok:true}); }
