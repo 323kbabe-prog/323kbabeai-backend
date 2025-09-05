@@ -3,6 +3,7 @@
   "version": "1.2.0",
   "private": true,
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
@@ -14,6 +15,7 @@
     "cors": "^2.8.5",
     "openai": "^4.48.1",
     "undici": "^6.19.8",
-    "node-vibrant": "3.1.6"
+    "node-vibrant": "3.1.6",
+    "@southctrl/musixmatch-lyrics": "^1.0.7"
   }
 }
