@@ -1,4 +1,4 @@
-// server.js — Info Set v1.2 KV Mirror (safe, with lyrics-finder + Genius fallback)
+// server.js — Info Set v1.2 KV Mirror (safe, with lyrics-finder + Genius + YouTube captions)
 
 import express from "express";
 import cors from "cors";
@@ -7,19 +7,20 @@ import Vibrant from "node-vibrant";
 import { fetch } from "undici";
 import lyricsFinder from "lyrics-finder";
 import Genius from "genius-lyrics";
+import { YoutubeTranscript } from "youtube-transcript";
 
 const app = express();
 const geniusClient = process.env.GENIUS_API_KEY ? new Genius.Client(process.env.GENIUS_API_KEY) : null;
+const youtubeApiKey = process.env.YOUTUBE_API_KEY || null;
 
 /* ---------------- CORS ---------------- */
 let ALLOW = [];
 if (process.env.CORS_ALLOW) {
   ALLOW = process.env.CORS_ALLOW.split(",").map(s => s.trim()).filter(Boolean);
 }
-
 app.use(cors({
   origin: (origin, cb) => {
-    if (!process.env.CORS_ALLOW) return cb(null, true); // allow all if unset
+    if (!process.env.CORS_ALLOW) return cb(null, true);
     if (!origin || ALLOW.includes(origin)) return cb(null, true);
     return cb(new Error("CORS: origin not allowed"));
   },
@@ -75,20 +76,39 @@ async function getAppleMostPlayed(storefront="us",limit=50){
   return (j.feed?.results||[]).map(x=>({title:x.name,artist:x.artistName}));
 }
 
-/* ---------------- Lyrics Search ---------------- */
+/* ---------------- Lyrics Search (multi-source) ---------------- */
 async function searchLyrics({title,artist}){
   try {
     const cleanTitle = title.replace(/\(.*?\)|\[.*?\]|-.*$/g, "").trim();
-    let lyrics = await lyricsFinder(artist, cleanTitle);
 
-    if (!lyrics && geniusClient) {
+    // 1. lyrics-finder
+    let lyrics = await lyricsFinder(artist, cleanTitle);
+    if (lyrics) return lyrics;
+
+    // 2. Genius API
+    if (geniusClient) {
       const results = await geniusClient.songs.search(`${cleanTitle} ${artist}`);
       if (results.length > 0) {
         lyrics = await results[0].lyrics();
+        if (lyrics) return lyrics;
       }
     }
 
-    return lyrics || "Lyrics not available.";
+    // 3. YouTube captions
+    if (youtubeApiKey) {
+      const ytSearchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(cleanTitle+" "+artist+" lyrics")}&key=${youtubeApiKey}`;
+      const res = await fetch(ytSearchUrl);
+      const j = await res.json();
+      const videoId = j.items?.[0]?.id?.videoId;
+      if (videoId) {
+        const transcript = await YoutubeTranscript.fetchTranscript(videoId);
+        if (transcript && transcript.length > 0) {
+          return transcript.map(line => line.text).join("\n");
+        }
+      }
+    }
+
+    return "Lyrics not available.";
   } catch(e) {
     console.error("lyrics error:", e.message);
     return "Lyrics not available.";
