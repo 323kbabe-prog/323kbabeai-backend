@@ -122,6 +122,17 @@ function vibeFromTitle(title = "") {
 }
 
 /* ---------------- Inspiration notes (style-only, not likeness) ---------------- */
+function makeFirstPersonDescription(title, artist) {
+  const options = [
+    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. I can see why everyone is talking about it right now.`,
+    `When “${title}” comes on, I can’t help but stop scrolling and let it run. ${artist} really caught a wave with this one.`,
+    `I’ve had “${title}” by ${artist} stuck in my head all day. It’s addictive in the best way and feels like the soundtrack of this moment.`,
+    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up. ${artist} nailed the energy here.`,
+    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring. It’s already part of my daily playlist.`
+  ];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
 function inspoToTags(inspo = "") {
   const chunks = String(inspo).split(/[,|]/).map(s => s.trim()).filter(Boolean);
   return chunks.slice(0, 8).map(x => `inspired detail: ${x}`);
@@ -401,7 +412,7 @@ data: ${JSON.stringify(data)}
     send("trend", {
       title: pick.title,
       artist: pick.artist,
-      description: pick.desc || "Trending right now.",
+      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"]
     });
 
@@ -452,7 +463,7 @@ app.get("/api/trend", async (req, res) => {
     res.json({
       title: pick.title,
       artist: pick.artist,
-      description: pick.desc || "Trending right now.",
+      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
       image: imageUrl,
       count: imageCount
