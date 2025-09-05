@@ -244,14 +244,16 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
     `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
-    `Audience: Gen‑Z fan culture (fans). Visual goal: ${s.description}.`,
+    `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
+    "The performer must always appear Korean, styled like a young K-pop idol (inspired by fan culture visuals).",
     ...s.tags.map(t => `• ${t}`),
     ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
     ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
   ].join(" ");
+}(" ");
 }
 
 /* ---------------- Image generation + fallbacks ---------------- */
