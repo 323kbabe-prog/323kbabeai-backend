@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol visuals)
+// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + First-person description)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -86,27 +86,47 @@ const STYLE_PRESETS = {
 
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
-/* ---------------- AI Favorite Pick (one song per reload, always Korean image) ---------------- */
+/* ---------------- First-person description helper ---------------- */
+function makeFirstPersonDescription(title, artist) {
+  const options = [
+    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal.`,
+    `When “${title}” comes on, I can’t help but stop scrolling and let it run. ${artist} really caught a wave with this one.`,
+    `I’ve had “${title}” by ${artist} stuck in my head all day. It feels like the soundtrack of this moment.`,
+    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up. ${artist} nailed the energy here.`,
+    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring.`
+  ];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+/* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
+      model: "gpt-4o",
       messages: [
         { role: "system", content: "You are a music trend parser." },
-        { role: "user", content: "Pick ONE current trending song (Spotify or TikTok). Reply as { title: '...', artist: '...' }." }
+        { role: "user", content: "Pick ONE current trending song (Spotify or TikTok). Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }." }
       ]
     });
-    const pick = completion.choices[0].message.parsed;
+
+    const text = completion.choices[0].message.content || "{}";
+    let pick;
+    try {
+      pick = JSON.parse(text);
+    } catch (err) {
+      console.error("JSON parse error:", err.message, "Raw text:", text);
+      pick = { title: "Unknown", artist: "Unknown" };
+    }
+
     return {
       title: pick.title || "Unknown",
       artist: pick.artist || "Unknown",
-      desc: "AI’s favorite pick right now.",
-      hashtags: ["#NowPlaying","#AIFavorite"]
+      desc: makeFirstPersonDescription(pick.title, pick.artist),
+      hashtags: ["#NowPlaying", "#AIFavorite"]
     };
   } catch (e) {
     console.error("Favorite pick failed:", e.message);
-    return { title: "Fallback Song", artist: "AI DJ", desc: "Fallback favorite.", hashtags: ["#AI"] };
+    return { title: "Fallback Song", artist: "AI DJ", desc: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
   }
 }
 
@@ -168,10 +188,7 @@ app.get("/api/trend-stream", async (req, res) => {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no"
   });
-  const send = (ev, data) => res.write(`event: ${ev}
-data: ${JSON.stringify(data)}
-
-`);
+  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
   const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
 
   send("hello", { ok: true });
