@@ -1,4 +1,4 @@
-// server.js — 323drop Live with Voice (AI Favorite Pick + TTS)
+// server.js — 323drop Live with Status + Voice
 const express = require("express");
 const cors = require("cors");
 const OpenAI = require("openai");
@@ -83,7 +83,7 @@ app.get("/api/trend", async (_req, res) => {
       artist: pick.artist,
       description: pick.desc,
       hashtags: pick.hashtags,
-      image: null, // image disabled in this minimal demo
+      image: null, // skipping image for this demo
       voice: voiceUrl,
       count: ++imageCount
     });
@@ -93,4 +93,4 @@ app.get("/api/trend", async (_req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`323drop with voice on :${PORT}`));
+app.listen(PORT, () => console.log(`323drop with status+voice on :${PORT}`));
