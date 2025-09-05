@@ -1,17 +1,12 @@
-// server.js — Info Set v1.2 KV Mirror (safe, with lyrics-finder + Genius + YouTube captions)
+// server.js — Info Set v1.2 KV Mirror (safe, with description instead of lyrics)
 
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 import Vibrant from "node-vibrant";
 import { fetch } from "undici";
-import lyricsFinder from "lyrics-finder";
-import Genius from "genius-lyrics";
-import { YoutubeTranscript } from "youtube-transcript";
 
 const app = express();
-const geniusClient = process.env.GENIUS_API_KEY ? new Genius.Client(process.env.GENIUS_API_KEY) : null;
-const youtubeApiKey = process.env.YOUTUBE_API_KEY || null;
 
 /* ---------------- CORS ---------------- */
 let ALLOW = [];
@@ -64,8 +59,9 @@ async function getSpotifyPlaylistTracks(playlistId, market="US", limit=50){
   if(!r.ok) throw new Error(`Spotify ${r.status}`);
   const j=await r.json();
   return (j.items||[]).map(it=>it.track).filter(Boolean).map(tr=>({
-    title:tr.name,
-    artist:(tr.artists||[]).map(a=>a.name).join(", "),
+    id: tr.id,
+    title: tr.name,
+    artist: (tr.artists||[]).map(a=>a.name).join(", "),
   }));
 }
 
@@ -76,42 +72,30 @@ async function getAppleMostPlayed(storefront="us",limit=50){
   return (j.feed?.results||[]).map(x=>({title:x.name,artist:x.artistName}));
 }
 
-/* ---------------- Lyrics Search (multi-source) ---------------- */
-async function searchLyrics({title,artist}){
+/* ---------------- Description Builder ---------------- */
+async function buildDescription(trackId, title, artist){
   try {
-    const cleanTitle = title.replace(/\(.*?\)|\[.*?\]|-.*$/g, "").trim();
+    const token = await getSpotifyToken();
+    const res = await fetch(`https://api.spotify.com/v1/audio-features/${trackId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const f = await res.json();
+    if (!f || f.error) return `A trending track by ${artist}.`;
 
-    // 1. lyrics-finder
-    let lyrics = await lyricsFinder(artist, cleanTitle);
-    if (lyrics) return lyrics;
+    let desc = `${title} by ${artist} is `;
+    if (f.energy > 0.7) desc += "a high-energy, intense track ";
+    else if (f.energy < 0.4) desc += "a mellow track ";
+    else desc += "a mid-tempo track ";
 
-    // 2. Genius API
-    if (geniusClient) {
-      const results = await geniusClient.songs.search(`${cleanTitle} ${artist}`);
-      if (results.length > 0) {
-        lyrics = await results[0].lyrics();
-        if (lyrics) return lyrics;
-      }
-    }
+    if (f.danceability > 0.7) desc += "built for dancefloors, ";
+    if (f.valence < 0.3) desc += "with darker and moody themes, ";
+    else if (f.valence > 0.6) desc += "with uplifting and positive vibes, ";
 
-    // 3. YouTube captions
-    if (youtubeApiKey) {
-      const ytSearchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(cleanTitle+" "+artist+" lyrics")}&key=${youtubeApiKey}`;
-      const res = await fetch(ytSearchUrl);
-      const j = await res.json();
-      const videoId = j.items?.[0]?.id?.videoId;
-      if (videoId) {
-        const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-        if (transcript && transcript.length > 0) {
-          return transcript.map(line => line.text).join("\n");
-        }
-      }
-    }
-
-    return "Lyrics not available.";
-  } catch(e) {
-    console.error("lyrics error:", e.message);
-    return "Lyrics not available.";
+    desc += `running at ${Math.round(f.tempo)} BPM.`;
+    return desc;
+  } catch (e) {
+    console.error("desc error:", e.message);
+    return `A trending track by ${artist}.`;
   }
 }
 
@@ -126,7 +110,6 @@ async function searchCover({title,artist}){
     const r=await fetch(u,{headers:{Authorization:`Bearer ${token}`}});
     const j=await r.json(); cover=j?.tracks?.items?.[0]?.album?.images?.[0]?.url||null;
   }catch{}
-
   if(!cover){
     try{
       const it=new URL("https://itunes.apple.com/search");
@@ -136,27 +119,6 @@ async function searchCover({title,artist}){
       const a=jj.results?.[0]?.artworkUrl100;
       cover=a? a.replace("100x100bb","1000x1000bb"):null;
     }catch{}
-  }
-
-  if(!cover){
-    try{
-      const search=await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(title)}+artist:${encodeURIComponent(artist)}&fmt=json`);
-      const mb=await search.json();
-      const release=mb.recordings?.[0]?.releases?.[0]?.id;
-      if(release) cover=`https://coverartarchive.org/release/${release}/front-500.jpg`;
-    }catch{}
-  }
-
-  if(!cover){
-    cover="data:image/svg+xml;base64,"+Buffer.from(`
-      <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
-        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-          <stop stop-color="#ff66cc" offset="0%"/>
-          <stop stop-color="#00ccff" offset="100%"/>
-        </linearGradient></defs>
-        <rect width="1024" height="1024" fill="url(#g)"/>
-      </svg>
-    `).toString("base64");
   }
   return cover;
 }
@@ -204,7 +166,6 @@ async function generateImageUrl(prompt){
 async function loadTrending({ market="US", storefront="us" } = {}){
   const now=Date.now();
   if(trendingCache.data.length && now<trendingCache.expires) return trendingCache.data;
-
   const TOP50="37i9dQZEVXbMDoHDwVN2tF";
   const VIRAL50="37i9dQZEVXbLiRSasKsNU9";
   let items=[];
@@ -216,15 +177,9 @@ async function loadTrending({ market="US", storefront="us" } = {}){
     ]);
     items=[...top50,...viral50,...apple];
   } catch(e){ console.error("Trending error:",e.message); }
-
   if(!items.length){
-    items=[
-      {title:"Espresso",artist:"Sabrina Carpenter"},
-      {title:"Birds of a Feather",artist:"Billie Eilish"},
-      {title:"Not Like Us",artist:"Kendrick Lamar"}
-    ];
+    items=[{title:"Espresso",artist:"Sabrina Carpenter"}];
   }
-
   trendingCache={ data: shuffle(dedupe(items)), expires: now+8*60*1000 };
   return trendingCache.data;
 }
@@ -243,7 +198,6 @@ app.get("/api/trend-kv", async (req,res)=>{
   try {
     const list=await loadTrending();
     if(!list.length) throw new Error("No trending tracks");
-
     let pick=list[Math.floor(Math.random()*list.length)];
     if(`${pick.title}::${pick.artist}`===lastPick && list.length>1){
       pick=list.find(x=>`${x.title}::${x.artist}`!==lastPick)||pick;
@@ -255,8 +209,8 @@ app.get("/api/trend-kv", async (req,res)=>{
     const cover=await searchCover(pick); send("cover",{url:cover});
     const palette=cover?await extractPaletteHexes(cover,6):[];
 
-    const lyrics=await searchLyrics(pick);
-    send("lyrics",{text:lyrics});
+    const description=await buildDescription(pick.id, pick.title, pick.artist);
+    send("description",{text:description});
 
     const prompt=buildKVPrompt({title:pick.title,artist:pick.artist,paletteHexes:palette});
     const img=await generateImageUrl(prompt);
