@@ -30,6 +30,10 @@ let lastImgErr = null;
 let trendingCache = { data: [], expires: 0 };
 let spotifyTokenCache = { token: null, expires: 0 };
 
+// --- Newest-first state ---
+let trendIndex = 0;
+let trendList = [];
+
 /* ---------------- Helpers ---------------- */
 const shuffle = (a) => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const dedupeByKey = (items) => {
@@ -118,6 +122,17 @@ function vibeFromTitle(title = "") {
 }
 
 /* ---------------- Inspiration notes (style-only, not likeness) ---------------- */
+function makeFirstPersonDescription(title, artist) {
+  const options = [
+    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. I can see why everyone is talking about it right now.`,
+    `When “${title}” comes on, I can’t help but stop scrolling and let it run. ${artist} really caught a wave with this one.`,
+    `I’ve had “${title}” by ${artist} stuck in my head all day. It’s addictive in the best way and feels like the soundtrack of this moment.`,
+    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up. ${artist} nailed the energy here.`,
+    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring. It’s already part of my daily playlist.`
+  ];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
 function inspoToTags(inspo = "") {
   const chunks = String(inspo).split(/[,|]/).map(s => s.trim()).filter(Boolean);
   return chunks.slice(0, 8).map(x => `inspired detail: ${x}`);
@@ -321,6 +336,24 @@ async function getImageWithFallback(pick, prompt) {
   return neonSvgPlaceholder(`${pick.title}|${pick.artist}`);
 }
 
+async function nextNewestPick({ market = "US", storefront = "us" } = {}) {
+  const list = await loadTrending({ market, storefront });
+
+  if (!trendList.length) {
+    trendList = dedupeByKey([...list]); // newest→oldest
+    trendIndex = 0;
+  }
+
+  if (trendIndex >= trendList.length) {
+    trendList = dedupeByKey([...list]);
+    trendIndex = 0;
+  }
+
+  const pick = trendList[trendIndex];
+  trendIndex++;
+  return pick;
+}
+
 /* ---------------- Diagnostics ---------------- */
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/diag/env", (_req,res) => res.json({
@@ -346,9 +379,7 @@ app.get("/api/trend-stream", async (req, res) => {
 data: ${JSON.stringify(data)}
 
 `);
-  const hb = setInterval(() => res.write(":keepalive
-
-"), 15015);
+  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
 
   send("hello", { ok: true });
 
@@ -357,7 +388,7 @@ data: ${JSON.stringify(data)}
     send("status", { msg: "fetching live trends…" });
     const market = String(req.query.market || "US").toUpperCase();
     const list = await loadTrending({ market, storefront: "us" });
-    pick = list[Math.floor(Math.random() * list.length)];
+    pick = await nextNewestPick({ market });
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
     if (key === lastKey && list.length > 1) {
       pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
@@ -381,7 +412,7 @@ data: ${JSON.stringify(data)}
     send("trend", {
       title: pick.title,
       artist: pick.artist,
-      description: pick.desc || "Trending right now.",
+      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"]
     });
 
@@ -409,7 +440,7 @@ app.get("/api/trend", async (req, res) => {
   try {
     const market = String(req.query.market || "US").toUpperCase();
     const list = await loadTrending({ market, storefront: "us" });
-    let pick = list[Math.floor(Math.random() * list.length)];
+    let pick = await nextNewestPick({ market });
     const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
     if (key === lastKey && list.length > 1) {
       pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
@@ -432,7 +463,7 @@ app.get("/api/trend", async (req, res) => {
     res.json({
       title: pick.title,
       artist: pick.artist,
-      description: pick.desc || "Trending right now.",
+      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
       image: imageUrl,
       count: imageCount
