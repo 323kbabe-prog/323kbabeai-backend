@@ -1,4 +1,4 @@
-// server.js — Info Set v1.2 KV Mirror (safe, with lyrics + images)
+// server.js — Info Set v1.2 KV Mirror (safe, with lyrics-finder + Genius fallback)
 
 import express from "express";
 import cors from "cors";
@@ -6,8 +6,10 @@ import OpenAI from "openai";
 import Vibrant from "node-vibrant";
 import { fetch } from "undici";
 import lyricsFinder from "lyrics-finder";
+import Genius from "genius-lyrics";
 
 const app = express();
+const geniusClient = process.env.GENIUS_API_KEY ? new Genius.Client(process.env.GENIUS_API_KEY) : null;
 
 /* ---------------- CORS ---------------- */
 let ALLOW = [];
@@ -17,8 +19,7 @@ if (process.env.CORS_ALLOW) {
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Default: allow all if no CORS_ALLOW set
-    if (!process.env.CORS_ALLOW) return cb(null, true);
+    if (!process.env.CORS_ALLOW) return cb(null, true); // allow all if unset
     if (!origin || ALLOW.includes(origin)) return cb(null, true);
     return cb(new Error("CORS: origin not allowed"));
   },
@@ -77,7 +78,16 @@ async function getAppleMostPlayed(storefront="us",limit=50){
 /* ---------------- Lyrics Search ---------------- */
 async function searchLyrics({title,artist}){
   try {
-    const lyrics = await lyricsFinder(artist, title);
+    const cleanTitle = title.replace(/\(.*?\)|\[.*?\]|-.*$/g, "").trim();
+    let lyrics = await lyricsFinder(artist, cleanTitle);
+
+    if (!lyrics && geniusClient) {
+      const results = await geniusClient.songs.search(`${cleanTitle} ${artist}`);
+      if (results.length > 0) {
+        lyrics = await results[0].lyrics();
+      }
+    }
+
     return lyrics || "Lyrics not available.";
   } catch(e) {
     console.error("lyrics error:", e.message);
@@ -88,8 +98,6 @@ async function searchLyrics({title,artist}){
 /* ---------------- Cover Search ---------------- */
 async function searchCover({title,artist}){
   let cover=null;
-
-  // Spotify
   try{
     const token=await getSpotifyToken();
     const u=new URL("https://api.spotify.com/v1/search");
@@ -99,7 +107,6 @@ async function searchCover({title,artist}){
     const j=await r.json(); cover=j?.tracks?.items?.[0]?.album?.images?.[0]?.url||null;
   }catch{}
 
-  // Apple
   if(!cover){
     try{
       const it=new URL("https://itunes.apple.com/search");
@@ -111,7 +118,6 @@ async function searchCover({title,artist}){
     }catch{}
   }
 
-  // MusicBrainz
   if(!cover){
     try{
       const search=await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(title)}+artist:${encodeURIComponent(artist)}&fmt=json`);
@@ -121,7 +127,6 @@ async function searchCover({title,artist}){
     }catch{}
   }
 
-  // Fallback
   if(!cover){
     cover="data:image/svg+xml;base64,"+Buffer.from(`
       <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
@@ -133,7 +138,6 @@ async function searchCover({title,artist}){
       </svg>
     `).toString("base64");
   }
-
   return cover;
 }
 
