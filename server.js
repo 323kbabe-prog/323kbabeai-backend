@@ -1,4 +1,4 @@
-// server.js — Info Set v1.2 KV Mirror (safe, trending auto-pick)
+// server.js — Info Set v1.2 KV Mirror (safe, trending auto-pick with fixed image API)
 
 const express = require("express");
 const cors = require("cors");
@@ -135,10 +135,20 @@ function buildKVPrompt({title,artist,sex,heritage,paletteHexes,audioCues}){
   ].filter(Boolean).join(" ");
 }
 
+/* ---------------- Image generator (fixed) ---------------- */
 async function generateImageUrl(prompt){
-  const out=await openai.images.generate({model:"gpt-image-1",prompt,size:"1024x1024",response_format:"b64_json"});
-  const b64=out?.data?.[0]?.b64_json;
-  return b64?`data:image/png;base64,${b64}`:null;
+  try {
+    const out=await openai.images.generate({
+      model:"gpt-image-1",
+      prompt,
+      size:"1024x1024"
+    });
+    const url=out.data[0].url;
+    return url||null;
+  } catch(e) {
+    console.error("[images]",e.message||e);
+    return null;
+  }
 }
 
 /* ---------------- KV auto endpoint ---------------- */
