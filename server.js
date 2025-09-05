@@ -99,6 +99,21 @@ function makeFirstPersonDescription(title, artist) {
 }
 
 /* ---------------- Sanitize titles/artists for image prompt ---------------- */
+
+/* ---------------- Gender & Voice helpers ---------------- */
+function genderFromArtist(artist = "") {
+  const lower = artist.toLowerCase();
+  if (["ariana","sabrina","doja","rihanna","beyonce","taylor"].some(n => lower.includes(n))) return "female";
+  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "male";
+  return "neutral";
+}
+function chooseVoice(artist = "") {
+  const lower = artist.toLowerCase();
+  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; // young female
+  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  // young male
+  return "alloy"; // fallback neutral
+}
+
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
@@ -144,7 +159,7 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
-    "The performer must always appear Korean, styled like a young K-pop idol (inspired by fan culture visuals).",
+    "The performer should appear as a young " + genderFromArtist(artist) + " Korean idol (Gen-Z style).",
     ...s.tags.map(t => `• ${t}`),
     ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
     ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
@@ -226,46 +241,13 @@ app.get("/api/trend-stream", async (req, res) => {
   }
 });
 
-
-/* ---------------- Prefetch ---------------- */
-let nextPrefetch = null;
-
-async function prefetchNext() {
-  try {
-    const pick = await nextNewestPick();
-    const prompt = stylizedPrompt(pick.title, pick.artist);
-    const cacheKey = `${pick.title}|${pick.artist}|${DEFAULT_STYLE}`;
-    const imageUrl = await generateImageUrl(prompt, cacheKey);
-    if (imageUrl) {
-      nextPrefetch = { ...pick, image: imageUrl, cacheKey };
-      console.log("[prefetch] Cached next image:", pick.title, "by", pick.artist);
-    }
-  } catch (e) {
-    console.error("[prefetch failed]", e.message);
-    nextPrefetch = null;
-  }
-}
-
 /* ---------------- JSON one-shot ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
-    let pick, imageUrl, cacheKey;
-
-    if (nextPrefetch) {
-      ({ title: pickTitle, artist: pickArtist, desc, hashtags, image: imageUrl, cacheKey } = nextPrefetch);
-      pick = { title: pickTitle, artist: pickArtist, desc, hashtags };
-      nextPrefetch = null;
-    } else {
-      pick = await nextNewestPick();
-      const prompt = stylizedPrompt(pick.title, pick.artist);
-      cacheKey = `${pick.title}|${pick.artist}|${DEFAULT_STYLE}`;
-      imageUrl = await generateImageUrl(prompt, cacheKey);
-    }
-
+    const pick = await nextNewestPick();
+    const prompt = stylizedPrompt(pick.title, pick.artist);
+    const imageUrl = await generateImageUrl(prompt);
     if (imageUrl) imageCount += 1;
-
-    // 🚀 Start background prefetch for the next one
-    prefetchNext();
 
     res.json({
       title: pick.title,
@@ -296,7 +278,7 @@ app.get("/api/voice", async (req, res) => {
 
     const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: "alloy", // can be changed to "verse", "sage", etc.
+      voice: chooseVoice(req.query.artist || ""), // can be changed to "verse", "sage", etc.
       input: text,
     });
 
