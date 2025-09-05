@@ -368,9 +368,7 @@ app.get("/api/trend-stream", async (req, res) => {
 data: ${JSON.stringify(data)}
 
 `);
-  const hb = setInterval(() => res.write(":keepalive
-
-"), 15015);
+  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
 
   send("hello", { ok: true });
 
@@ -477,4 +475,3 @@ app.listen(PORT, () => {
   console.log(`323drop live backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
 });
-
