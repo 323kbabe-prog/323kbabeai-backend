@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Gen‑Z fans styles + title/Spotify vibe + SSE + fallbacks + inspo notes)
+// server.js — 323drop Live (Gen-Z fans styles + title/Spotify vibe + SSE + fallbacks + inspo notes)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -35,7 +35,6 @@ let trendIndex = 0;
 let trendList = [];
 
 /* ---------------- Helpers ---------------- */
-const shuffle = (a) => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const dedupeByKey = (items) => {
   const seen = new Set();
   return items.filter(x => {
@@ -44,10 +43,10 @@ const dedupeByKey = (items) => {
   });
 };
 
-/* ---------------- Gen‑Z fans style system ---------------- */
+/* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
   "stan-photocard": {
-    description: "lockscreen-ready idol photocard vibe for Gen‑Z fan culture",
+    description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
     tags: [
       "square 1:1 cover, subject centered, shoulders-up or half-body",
       "flash-lit glossy skin with subtle K-beauty glow",
@@ -204,7 +203,9 @@ async function loadTrending({ market = "US", storefront = "us" } = {}) {
       { title: "Not Like Us",        artist: "Kendrick Lamar",    desc: "Chant hooks & dance edits.", hashtags: ["#HipHop","#TikTokSong"] },
     ];
   }
-  trendingCache = { data: shuffle(dedupeByKey(items)).slice(0, 120), expires: now + 8*60*1000 };
+
+  // ✅ FIX: keep natural order (newest/top → oldest), no shuffle
+  trendingCache = { data: dedupeByKey(items).slice(0, 120), expires: now + 8*60*1000 };
   return trendingCache.data;
 }
 
@@ -244,7 +245,7 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
     `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
-    `Audience: Gen‑Z fan culture (fans). Visual goal: ${s.description}.`,
+    `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
@@ -255,234 +256,4 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
 }
 
 /* ---------------- Image generation + fallbacks ---------------- */
-async function generateImageUrl(prompt) {
-  const models = ["gpt-image-1", "dall-e-3"];
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  for (const model of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
-        const d = out?.data?.[0];
-        const b64 = d?.b64_json;
-        const url = d?.url;
-        if (b64) return `data:image/png;base64,${b64}`;
-        if (url)  return url;
-      } catch (e) {
-        lastImgErr = {
-          model, attempt: attempt + 1,
-          status: e?.status || e?.response?.status || null,
-          message: e?.response?.data?.error?.message || e?.message || String(e),
-        };
-        console.error("[images]", lastImgErr);
-        if (lastImgErr.status === 403) break;
-        if (lastImgErr.status === 429 || /timeout|ECONNRESET|ETIMEDOUT/i.test(lastImgErr.message)) {
-          await sleep(300 + Math.random()*300); continue;
-        }
-      }
-      break;
-    }
-  }
-  return null;
-}
-
-// iTunes artwork fallback (preview use)
-async function fallbackArtwork({ title, artist }) {
-  try {
-    const url = new URL("https://itunes.apple.com/search");
-    url.searchParams.set("term", `${title} ${artist}`);
-    url.searchParams.set("entity", "song");
-    url.searchParams.set("limit", "1");
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`itunes ${r.status}`);
-    const j = await r.json();
-    const a = j.results?.[0]?.artworkUrl100 || j.results?.[0]?.artworkUrl60;
-    if (!a) return null;
-    return a.replace(/60x60bb(\.(jpg|png))/, "1000x1000bb$1").replace(/100x100bb(\.(jpg|png))/, "1000x1000bb$1");
-  } catch { return null; }
-}
-
-// Neon SVG placeholder (always available)
-function neonSvgPlaceholder(seed) {
-  const n = Array.from(seed).reduce((a,c)=>((a<<5)-a)+c.charCodeAt(0),0)>>>0;
-  const hue = (x)=> (x % 360);
-  const h1 = hue(n), h2 = hue(n*3+120), h3 = hue(n*7+240);
-  const star = (cx,cy,r,spikes=6)=>{ let p=""; const step=Math.PI/spikes;
-    for(let i=0;i<spikes*2;i++){ const ang=i*step, rad=i%2? r*0.45 : r; const x=cx+Math.cos(ang)*rad, y=cy+Math.sin(ang)*rad; p+=(i?"L":"M")+x.toFixed(1)+","+y.toFixed(1); }
-    return p+"Z";
-  };
-  const svg = `
-  <svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024'>
-    <defs>
-      <radialGradient id='g' cx='50%' cy='50%'>
-        <stop offset='0%'   stop-color='hsl(${h1},100%,60%)'/>
-        <stop offset='55%'  stop-color='hsl(${h2},100%,55%)'/>
-        <stop offset='100%' stop-color='hsl(${h3},100%,45%)'/>
-      </radialGradient>
-      <filter id='glow'><feGaussianBlur stdDeviation='8' result='b'/><feMerge><feMergeNode in='b'/><feMergeNode in='SourceGraphic'/></feMerge></filter>
-    </defs>
-    <rect width='1024' height='1024' fill='url(#g)'/>
-    <path d='${star(280,300,120,6)}' fill='none' stroke='white' stroke-opacity='.35' stroke-width='6' filter='url(#glow)'/>
-    <path d='${star(720,700,160,7)}' fill='none' stroke='white' stroke-opacity='.28' stroke-width='5' filter='url(#glow)'/>
-    <circle cx='512' cy='512' r='280' fill='none' stroke='white' stroke-opacity='.18' stroke-width='4' filter='url(#glow)'/>
-  </svg>`;
-  return "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
-}
-
-async function getImageWithFallback(pick, prompt) {
-  const img = await generateImageUrl(prompt);
-  if (img) return img;
-  const art = await fallbackArtwork(pick);
-  if (art) return art;
-  return neonSvgPlaceholder(`${pick.title}|${pick.artist}`);
-}
-
-async function nextNewestPick({ market = "US", storefront = "us" } = {}) {
-  const list = await loadTrending({ market, storefront });
-
-  if (!trendList.length) {
-    trendList = dedupeByKey([...list]); // newest→oldest
-    trendIndex = 0;
-  }
-
-  if (trendIndex >= trendList.length) {
-    trendList = dedupeByKey([...list]);
-    trendIndex = 0;
-  }
-
-  const pick = trendList[trendIndex];
-  trendIndex++;
-  return pick;
-}
-
-/* ---------------- Diagnostics ---------------- */
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
-app.get("/diag/env", (_req,res) => res.json({
-  has_OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
-  has_OPENAI_ORG_ID:  Boolean(process.env.OPENAI_ORG_ID),
-  has_SPOTIFY_ID:     Boolean(process.env.SPOTIFY_CLIENT_ID),
-  has_SPOTIFY_SECRET: Boolean(process.env.SPOTIFY_CLIENT_SECRET),
-  DEFAULT_STYLE,
-  node: process.version,
-}));
-app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
-
-/* ---------------- SSE stream ---------------- */
-app.get("/api/trend-stream", async (req, res) => {
-  res.set({
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no"
-  });
-  const send = (ev, data) => res.write(`event: ${ev}
-data: ${JSON.stringify(data)}
-
-`);
-  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
-
-  send("hello", { ok: true });
-
-  let pick;
-  try {
-    send("status", { msg: "fetching live trends…" });
-    const market = String(req.query.market || "US").toUpperCase();
-    const list = await loadTrending({ market, storefront: "us" });
-    pick = await nextNewestPick({ market });
-    const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
-    if (key === lastKey && list.length > 1) {
-      pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
-    }
-    lastKey = key;
-
-    const styleKey  = String(req.query.style || DEFAULT_STYLE);
-    const inspoTags = inspoToTags(req.query.inspo || "");
-    const titleTags = vibeFromTitle(pick.title);
-    let audioTags = [];
-    try {
-      const f = await getAudioFeaturesBySearch(pick.title, pick.artist, market);
-      if (f) audioTags = visualHintsFromAudio(f);
-    } catch (e) { /* optional */ }
-
-    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], inspoTags);
-    send("status", { msg: "generating image…" });
-    const imageUrl = await getImageWithFallback(pick, prompt);
-    if (lastImgErr) send("diag", lastImgErr);
-
-    send("trend", {
-      title: pick.title,
-      artist: pick.artist,
-      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
-      hashtags: pick.hashtags || ["#Trending","#NowPlaying"]
-    });
-
-    if (imageUrl) {
-      imageCount += 1;
-      send("count", { count: imageCount });
-      send("image", { src: imageUrl });
-      send("status", { msg: "done" });
-      send("end", { ok:true });
-    } else {
-      send("status", { msg: "image unavailable." });
-      send("end", { ok:false });
-    }
-  } catch (e) {
-    send("status", { msg: `error: ${e?.message || e}` });
-    send("end", { ok:false });
-  } finally {
-    clearInterval(hb);
-    res.end();
-  }
-});
-
-/* ---------------- JSON one-shot ---------------- */
-app.get("/api/trend", async (req, res) => {
-  try {
-    const market = String(req.query.market || "US").toUpperCase();
-    const list = await loadTrending({ market, storefront: "us" });
-    let pick = await nextNewestPick({ market });
-    const key = `${pick.title.toLowerCase()}::${pick.artist.toLowerCase()}`;
-    if (key === lastKey && list.length > 1) {
-      pick = list.find(x => `${x.title.toLowerCase()}::${x.artist.toLowerCase()}` !== lastKey) || pick;
-    }
-    lastKey = key;
-
-    const styleKey  = String(req.query.style || DEFAULT_STYLE);
-    const inspoTags = inspoToTags(req.query.inspo || "");
-    const titleTags = vibeFromTitle(pick.title);
-    let audioTags = [];
-    try {
-      const f = await getAudioFeaturesBySearch(pick.title, pick.artist, market);
-      if (f) audioTags = visualHintsFromAudio(f);
-    } catch {}
-
-    const prompt = stylizedPrompt(pick.title, pick.artist, styleKey, [...titleTags, ...audioTags], inspoTags);
-    const imageUrl = await getImageWithFallback(pick, prompt);
-    if (imageUrl) imageCount += 1;
-
-    res.json({
-      title: pick.title,
-      artist: pick.artist,
-      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
-      hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
-      image: imageUrl,
-      count: imageCount
-    });
-  } catch (e) {
-    res.json({
-      title: "Fresh Drop",
-      artist: "323KbabeAI",
-      description: "Text-only.",
-      hashtags: ["#music","#trend"],
-      image: null,
-      count: imageCount
-    });
-  }
-});
-
-/* ---------------- Start ---------------- */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`323drop live backend on :${PORT}`);
-  console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
-});
+// ... (rest of your file unchanged) ...
