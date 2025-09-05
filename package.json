@@ -1,14 +1,19 @@
 {
-  "name": "three23kbabeai-backend",
-  "version": "1.0.0",
+  "name": "info-set-v1_2-kv",
+  "version": "1.2.0",
   "private": true,
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": "20.x" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
     "express": "^4.19.2",
     "cors": "^2.8.5",
     "openai": "^4.48.1",
-    "undici": "^6.19.8"
+    "undici": "^6.19.8",
+    "node-vibrant": "^3.2.1"
   }
 }
