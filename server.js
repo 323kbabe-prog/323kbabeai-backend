@@ -9,9 +9,9 @@ const { fetch } = require("undici");
 const app = express();
 
 /* ---------------- CORS ---------------- */
-const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
+// SAFE MODE: allow all origins (no crash on Render health checks)
 app.use(cors({
-  origin: (origin, cb) => (!origin || ALLOW.includes(origin)) ? cb(null, true) : cb(new Error("CORS: origin not allowed")),
+  origin: (origin, cb) => cb(null, true),
   methods: ["GET", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
   maxAge: 86400,
@@ -45,99 +45,32 @@ const dedupeByKey = (items) => {
 
 /* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
-  "stan-photocard": {
-    description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
-    tags: [
-      "square 1:1 cover, subject centered, shoulders-up or half-body",
-      "flash-lit glossy skin with subtle K-beauty glow",
-      "pastel gradient background (milk pink, baby blue, lilac) with haze",
-      "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
-      "tiny glitter bokeh and lens glints",
-      "clean studio sweep look; light falloff; subtle film grain",
-      "original influencer look — not a specific or real celebrity face"
-    ]
-  },
-  "poster-wall": {
-    description: "DIY bedroom poster wall — shareable fan collage energy",
-    tags: [
-      "layered paper textures with tape corners and torn edges",
-      "implied magazine clippings WITHOUT readable text or logos",
-      "pastel + neon accents, soft shadowed layers",
-      "subject in front with crisp rim light; background defocused collage",
-      "sparkle confetti and star cutouts; tasteful grain",
-      "original, non-celeb face with pop-idol charisma"
-    ]
-  },
-  "glow-stage-fan": {
-    description: "arena lightstick glow — concert-night fan moment",
-    tags: [
-      "dark stage background with colorful beam lights and haze",
-      "bokeh crowd dots; generic lightstick silhouettes (no branding)",
-      "hot rim light on hair and shoulders; motion vibe",
-      "bold neon accents (electric cyan, hot pink, laser purple)",
-      "no text, no numbers, no logos; original performer vibe"
-    ]
-  },
-  "y2k-stickerbomb": {
-    description: "Y2K candycore — playful stickerbomb pop aesthetic",
-    tags: [
-      "candy tones (cotton-candy pink, lime soda, sky cyan); glossy highlights",
-      "airbrush hearts and starbursts as shapes only",
-      "phone-camera flash look with mild bloom",
-      "floating sticker motifs around subject; keep face clean",
-      "no typography; original pop-idol energy"
-    ]
-  },
-  "street-fandom": {
-    description: "urban fan-cam energy — trendy city-night shareability",
-    tags: [
-      "city night backdrop; neon sign SHAPES only (no readable words)",
-      "low-angle phone-cam feel; slight motion trail on hair/jackets",
-      "wet asphalt reflections; cinematic contrast",
-      "light leak edges; tiny dust particles",
-      "original influencer face; not a real celebrity"
-    ]
-  }
+  "stan-photocard": { description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture", tags: [] },
+  "poster-wall": { description: "DIY bedroom poster wall — shareable fan collage energy", tags: [] },
+  "glow-stage-fan": { description: "arena lightstick glow — concert-night fan moment", tags: [] },
+  "y2k-stickerbomb": { description: "Y2K candycore — playful stickerbomb pop aesthetic", tags: [] },
+  "street-fandom": { description: "urban fan-cam energy — trendy city-night shareability", tags: [] }
 };
-
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
 /* ---------------- Title → vibe tags ---------------- */
 function vibeFromTitle(title = "") {
-  const MAP = [
-    { re: /(love|heart|kiss)/i,      tags: ["warm pink–peach palette", "heart sticker shapes"] },
-    { re: /(night|midnight|moon)/i,  tags: ["deep blue–purple palette", "neon rim light"] },
-    { re: /(star|shine|glow)/i,      tags: ["sparkle star bokeh", "beam glow accents"] },
-    { re: /(cry|tears|sad)/i,        tags: ["soft blue haze", "pearlescent highlights", "droplet bokeh"] },
-    { re: /(fire|hot|burn|flame)/i,  tags: ["red–orange accents", "heat-shimmer blur"] },
-    { re: /(summer|sun|beach)/i,     tags: ["golden-hour light", "warm film grain"] },
-    { re: /(ice|cold|snow|winter)/i, tags: ["icy cyan palette", "crystal sparkles"] },
-    { re: /(idol|fan|stan)/i,        tags: ["photocard framing", "soft flash + sparkle sticker shapes"] },
-    { re: /(dance|party|move|groove|bounce)/i, tags: ["motion trails", "confetti micro-particles"] }
-  ];
-  const out = new Set();
-  for (const m of MAP) if (m.re.test(title)) m.tags.forEach(t => out.add(t));
-  return [...out];
+  return [];
 }
 
-/* ---------------- Inspiration notes (style-only, not likeness) ---------------- */
+/* ---------------- First-person description ---------------- */
 function makeFirstPersonDescription(title, artist) {
   const options = [
-    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. I can see why everyone is talking about it right now.`,
-    `When “${title}” comes on, I can’t help but stop scrolling and let it run. ${artist} really caught a wave with this one.`,
-    `I’ve had “${title}” by ${artist} stuck in my head all day. It’s addictive in the best way and feels like the soundtrack of this moment.`,
-    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up. ${artist} nailed the energy here.`,
-    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring. It’s already part of my daily playlist.`
+    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal.`,
+    `When “${title}” comes on, I can’t help but stop scrolling and let it run.`,
+    `I’ve had “${title}” by ${artist} stuck in my head all day — addictive in the best way.`,
+    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up.`,
+    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring.`
   ];
   return options[Math.floor(Math.random() * options.length)];
 }
 
-function inspoToTags(inspo = "") {
-  const chunks = String(inspo).split(/[,|]/).map(s => s.trim()).filter(Boolean);
-  return chunks.slice(0, 8).map(x => `inspired detail: ${x}`);
-}
-
-/* ---------------- Spotify — optional audio features → vibe ---------------- */
+/* ---------------- Spotify & Apple trending ---------------- */
 async function getSpotifyToken() {
   const now = Date.now();
   if (spotifyTokenCache.token && now < spotifyTokenCache.expires - 60000) return spotifyTokenCache.token;
@@ -198,9 +131,9 @@ async function loadTrending({ market = "US", storefront = "us" } = {}) {
 
   if (!items.length) {
     items = [
-      { title: "Espresso",           artist: "Sabrina Carpenter", desc: "Viral chorus hooks.",        hashtags: ["#Pop","#Earworm"] },
-      { title: "Birds of a Feather", artist: "Billie Eilish",     desc: "Romance edit magnet.",       hashtags: ["#AltPop","#Viral"] },
-      { title: "Not Like Us",        artist: "Kendrick Lamar",    desc: "Chant hooks & dance edits.", hashtags: ["#HipHop","#TikTokSong"] },
+      { title: "Espresso", artist: "Sabrina Carpenter", desc: "Viral chorus hooks.", hashtags: ["#Pop","#Earworm"] },
+      { title: "Birds of a Feather", artist: "Billie Eilish", desc: "Romance edit magnet.", hashtags: ["#AltPop","#Viral"] },
+      { title: "Not Like Us", artist: "Kendrick Lamar", desc: "Chant hooks & dance edits.", hashtags: ["#HipHop","#TikTokSong"] },
     ];
   }
 
@@ -209,51 +142,81 @@ async function loadTrending({ market = "US", storefront = "us" } = {}) {
   return trendingCache.data;
 }
 
-async function getAudioFeaturesBySearch(title, artist, market = "US") {
-  const token = await getSpotifyToken();
-  const url = new URL("https://api.spotify.com/v1/search");
-  url.searchParams.set("q", `track:${title} artist:${artist}`);
-  url.searchParams.set("type", "track");
-  url.searchParams.set("limit", "1");
-  url.searchParams.set("market", market);
+/* ---------------- Sequential picker ---------------- */
+async function nextNewestPick({ market = "US", storefront = "us" } = {}) {
+  const list = await loadTrending({ market, storefront });
+  if (!trendList.length) {
+    trendList = dedupeByKey([...list]); // keep chart order
+    trendIndex = 0;
+  }
+  if (trendIndex >= trendList.length) {
+    trendList = dedupeByKey([...list]);
+    trendIndex = 0;
+  }
+  const pick = trendList[trendIndex];
+  trendIndex++;
+  return pick;
+}
 
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok) throw new Error(`Spotify search failed: ${r.status}`);
-  const j = await r.json();
-  const tr = j?.tracks?.items?.[0];
-  if (!tr) return null;
+/* ---------------- Diagnostics ---------------- */
+app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
 
-  const fr = await fetch(`https://api.spotify.com/v1/audio-features/${tr.id}`, {
-    headers: { Authorization: `Bearer ${token}` }
+/* ---------------- SSE stream ---------------- */
+app.get("/api/trend-stream", async (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
   });
-  if (!fr.ok) throw new Error(`audio-features failed: ${fr.status}`);
-  return await fr.json();
-}
-function visualHintsFromAudio(f) {
-  const tags = [];
-  if (f.energy >= 0.7)  tags.push("high-contrast lighting, neon edge highlights");
-  else                  tags.push("soft pastel lighting with gentle bloom");
-  if (f.valence >= 0.6) tags.push("optimistic warm color cast"); else tags.push("cool moody color cast");
-  if (f.danceability >= 0.7) tags.push("dynamic motion echoes around hair and sleeves");
-  if (f.tempo > 140) tags.push("staccato shutter trails and spark particles");
-  if (f.acousticness >= 0.6) tags.push("organic texture, subtle film grain");
-  return tags;
-}
+  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
 
-/* ---------------- Prompt builder (fans + inspo) ---------------- */
-function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = []) {
-  const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
-  return [
-    `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
-    `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
-    "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
-    "Absolutely no text, letters, numbers, logos, or watermarks.",
-    "Square 1:1 composition, clean crop; energetic but tasteful effects.",
-    ...s.tags.map(t => `• ${t}`),
-    ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
-    ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
-  ].join(" ");
-}
+  send("hello", { ok: true });
 
-/* ---------------- Image generation + fallbacks ---------------- */
-// ... (rest of your file unchanged) ...
+  try {
+    const market = String(req.query.market || "US").toUpperCase();
+    const pick = await nextNewestPick({ market });
+
+    send("trend", {
+      title: pick.title,
+      artist: pick.artist,
+      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
+      hashtags: pick.hashtags || ["#Trending","#NowPlaying"]
+    });
+
+    send("end", { ok:true });
+  } catch (e) {
+    send("status", { msg: `error: ${e?.message || e}` });
+    send("end", { ok:false });
+  }
+});
+
+/* ---------------- JSON one-shot ---------------- */
+app.get("/api/trend", async (req, res) => {
+  try {
+    const market = String(req.query.market || "US").toUpperCase();
+    const pick = await nextNewestPick({ market });
+    res.json({
+      title: pick.title,
+      artist: pick.artist,
+      description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
+      hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
+      count: ++imageCount
+    });
+  } catch (e) {
+    res.json({
+      title: "Fresh Drop",
+      artist: "323KbabeAI",
+      description: "Text-only.",
+      hashtags: ["#music","#trend"],
+      count: imageCount
+    });
+  }
+});
+
+/* ---------------- Start ---------------- */
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`323drop live backend on :${PORT}`);
+});
