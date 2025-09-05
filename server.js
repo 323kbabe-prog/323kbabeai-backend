@@ -9,7 +9,7 @@ const { fetch } = require("undici");
 const app = express();
 
 /* ---------------- CORS ---------------- */
-// SAFE MODE: allow all origins (no crash on Render health checks)
+// Safe mode: allow all origins (no crash on Render health checks)
 app.use(cors({
   origin: (origin, cb) => cb(null, true),
   methods: ["GET", "OPTIONS"],
@@ -43,22 +43,7 @@ const dedupeByKey = (items) => {
   });
 };
 
-/* ---------------- Gen-Z fans style system ---------------- */
-const STYLE_PRESETS = {
-  "stan-photocard": { description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture", tags: [] },
-  "poster-wall": { description: "DIY bedroom poster wall — shareable fan collage energy", tags: [] },
-  "glow-stage-fan": { description: "arena lightstick glow — concert-night fan moment", tags: [] },
-  "y2k-stickerbomb": { description: "Y2K candycore — playful stickerbomb pop aesthetic", tags: [] },
-  "street-fandom": { description: "urban fan-cam energy — trendy city-night shareability", tags: [] }
-};
-const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
-
-/* ---------------- Title → vibe tags ---------------- */
-function vibeFromTitle(title = "") {
-  return [];
-}
-
-/* ---------------- First-person description ---------------- */
+/* ---------------- Description ---------------- */
 function makeFirstPersonDescription(title, artist) {
   const options = [
     `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal.`,
@@ -158,7 +143,32 @@ async function nextNewestPick({ market = "US", storefront = "us" } = {}) {
   return pick;
 }
 
+/* ---------------- Image generation + fallback ---------------- */
+function neonSvgPlaceholder(seed) {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024'>
+    <rect width='1024' height='1024' fill='black'/>
+    <text x='50%' y='50%' fill='white' font-size='40' text-anchor='middle' dominant-baseline='middle'>323drop</text>
+  </svg>`;
+  return "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
+}
+
+async function getImageWithFallback(pick) {
+  try {
+    const out = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt: `Cover image for "${pick.title}" by ${pick.artist}`,
+      size: "1024x1024"
+    });
+    return out?.data?.[0]?.url || neonSvgPlaceholder(`${pick.title}|${pick.artist}`);
+  } catch (e) {
+    lastImgErr = { status: e?.status || null, message: e?.message || String(e) };
+    console.error("Image error:", lastImgErr);
+    return neonSvgPlaceholder(`${pick.title}|${pick.artist}`);
+  }
+}
+
 /* ---------------- Diagnostics ---------------- */
+app.get("/diag/images", (_req, res) => res.json({ lastImgErr }));
 app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
 
 /* ---------------- SSE stream ---------------- */
@@ -177,14 +187,17 @@ app.get("/api/trend-stream", async (req, res) => {
   try {
     const market = String(req.query.market || "US").toUpperCase();
     const pick = await nextNewestPick({ market });
+    const imageUrl = await getImageWithFallback(pick);
 
     send("trend", {
       title: pick.title,
       artist: pick.artist,
       description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
-      hashtags: pick.hashtags || ["#Trending","#NowPlaying"]
+      hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
+      image: imageUrl
     });
 
+    send("count", { count: ++imageCount });
     send("end", { ok:true });
   } catch (e) {
     send("status", { msg: `error: ${e?.message || e}` });
@@ -197,11 +210,14 @@ app.get("/api/trend", async (req, res) => {
   try {
     const market = String(req.query.market || "US").toUpperCase();
     const pick = await nextNewestPick({ market });
+    const imageUrl = await getImageWithFallback(pick);
+
     res.json({
       title: pick.title,
       artist: pick.artist,
       description: (pick.desc || "Trending right now.") + " " + makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: pick.hashtags || ["#Trending","#NowPlaying"],
+      image: imageUrl,
       count: ++imageCount
     });
   } catch (e) {
@@ -210,6 +226,7 @@ app.get("/api/trend", async (req, res) => {
       artist: "323KbabeAI",
       description: "Text-only.",
       hashtags: ["#music","#trend"],
+      image: neonSvgPlaceholder("fallback"),
       count: imageCount
     });
   }
