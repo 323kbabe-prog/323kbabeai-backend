@@ -1,19 +1,18 @@
-# .env.example for Info Set v1.2 — KV Mirror (safe)
+# .env.example for Info Set v1.2 KV Mirror (safe)
 
-# 🔑 Required
+# Required OpenAI key
 OPENAI_API_KEY=sk-xxxx
 
-# 🎵 Optional (for Spotify audio features)
+# Optional: Spotify (needed for trending + cover search)
 #SPOTIFY_CLIENT_ID=your_spotify_client_id
 #SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 
-# 🌐 Domains allowed to call your backend
-# Add both your live domain and "www." version to prevent CORS errors
-CORS_ALLOW=https://1ai323.ai,https://www.1ai323.ai
+# Domains allowed to connect to backend
+CORS_ALLOW=https://1ai323.ai,https://www.1ai323.ai,https://three23kbabeai-backend.onrender.com
 
-# 🎨 Default rendering options
+# Default KV Mirror settings
 DEFAULT_ART=film-editorial
 DEFAULT_STYLE=stan-photocard
 
-# 🚪 Port (Render will override, but keep for local testing)
+# Port for local dev (Render sets its own)
 PORT=10000
