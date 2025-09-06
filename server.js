@@ -81,22 +81,14 @@ async function nextNewestPick() {
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
-      temperature: 0.7,
       messages: [
-        { role: "system", content: "You are a strict JSON API that outputs TikTok trending 2025 songs." },
-        { role: "user", content: "Pick ONE trending song from TikTok in 2025. Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }." }
+        { role: "system", content: "You are a music trend parser." },
+        { role: "user", content: "Pick ONE current trending song (Spotify or TikTok). Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }." }
       ]
     });
-
     const text = completion.choices[0].message.content || "{}";
     let pick;
-    try {
-      pick = JSON.parse(text);
-    } catch {
-      const match = text.match(/\{[\s\S]*\}/);
-      pick = match ? JSON.parse(match[0]) : { title: "Unknown", artist: "Unknown" };
-    }
-
+    try { pick = JSON.parse(text); } catch { pick = { title: "Unknown", artist: "Unknown" }; }
     return {
       title: pick.title || "Unknown",
       artist: pick.artist || "Unknown",
@@ -107,7 +99,6 @@ async function nextNewestPick() {
     return { title: "Fallback Song", artist: "AI DJ", description: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
   }
 }
-
 
 /* ---------------- Prompt builder ---------------- */
 function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE) {
@@ -245,23 +236,23 @@ app.get("/api/trend-stream", async (req, res) => {
   }
 });
 
-/* ---------------- Voice Generator ---------------- */
-async function generateVoice(text, voice = "bright") {
+/* ---------------- Voice (TTS) ---------------- */
+app.get("/api/voice", async (req, res) => {
   try {
-    const speech = await openai.audio.speech.create({
+    const text = req.query.text || "";
+    if (!text) return res.status(400).json({ error: "Missing text" });
+    const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice,   // 👈 change this: "bright", "serene", "alloy", "warm", etc.
-      input: text
+      voice: chooseVoice(req.query.artist || ""),
+      input: text,
     });
-
-    const buffer = Buffer.from(await speech.arrayBuffer());
-    return `data:audio/mp3;base64,${buffer.toString("base64")}`;
-  } catch (err) {
-    console.error("Voice error:", err);
-    return null;
+    const buffer = Buffer.from(await out.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(buffer);
+  } catch {
+    res.status(500).json({ error: "TTS failed" });
   }
-}
-
+});
 
 /* ---------------- Diagnostics ---------------- */
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
