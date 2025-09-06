@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice)
+// server.js — 323drop Final Backend (Spotify Top 50 + Audience Race + Mood Personality)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -23,335 +23,140 @@ const openai = new OpenAI({
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
 });
 
-/* ---------------- State ---------------- */
-let imageCount = 0;
-let lastImgErr = null;
-let lastSongs = []; // track last 5 picks
-let bannedSongs = ["Paint The Town Red"]; // avoid sticky repeats
-
-/* ---------------- Gen-Z fans style system ---------------- */
-const STYLE_PRESETS = {
-  "stan-photocard": { description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture", tags: [
-    "square 1:1 cover, subject centered, shoulders-up or half-body",
-    "flash-lit glossy skin with subtle K-beauty glow",
-    "pastel gradient background (milk pink, baby blue, lilac) with haze",
-    "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
-    "tiny glitter bokeh and lens glints",
-    "clean studio sweep look; light falloff; subtle film grain",
-    "original influencer look — not a specific or real celebrity face"
-  ]},
-  "poster-wall": { description: "DIY bedroom poster wall — shareable fan collage energy", tags: [
-    "layered paper textures with tape corners and torn edges",
-    "implied magazine clippings WITHOUT readable text or logos",
-    "pastel + neon accents, soft shadowed layers",
-    "subject in front with crisp rim light; background defocused collage",
-    "sparkle confetti and star cutouts; tasteful grain",
-    "original, non-celeb face with pop-idol charisma"
-  ]},
-  "glow-stage-fan": { description: "arena lightstick glow — concert-night fan moment", tags: [
-    "dark stage background with colorful beam lights and haze",
-    "bokeh crowd dots; generic lightstick silhouettes (no branding)",
-    "hot rim light on hair and shoulders; motion vibe",
-    "bold neon accents (electric cyan, hot pink, laser purple)",
-    "no text, no numbers, no logos; original performer vibe"
-  ]},
-  "y2k-stickerbomb": { description: "Y2K candycore — playful stickerbomb pop aesthetic", tags: [
-    "candy tones (cotton-candy pink, lime soda, sky cyan); glossy highlights",
-    "airbrush hearts and starbursts as shapes only",
-    "phone-camera flash look with mild bloom",
-    "floating sticker motifs around subject; keep face clean",
-    "no typography; original pop-idol energy"
-  ]},
-  "street-fandom": { description: "urban fan-cam energy — trendy city-night shareability", tags: [
-    "city night backdrop; neon sign SHAPES only (no readable words)",
-    "low-angle phone-cam feel; slight motion trail on hair/jackets",
-    "wet asphalt reflections; cinematic contrast",
-    "light leak edges; tiny dust particles",
-    "original influencer face; not a real celebrity"
-  ]}
-};
-
-const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
-
 /* ---------------- Helpers ---------------- */
+function cleanForPrompt(str = "") {
+  return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
+}
+
 function genderFromArtist(artist = "") {
   const lower = artist.toLowerCase();
   if (["ariana","sabrina","doja","rihanna","beyonce","taylor"].some(n => lower.includes(n))) return "female";
   if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "male";
   return "neutral";
 }
+
 function chooseVoice(artist = "") {
   const lower = artist.toLowerCase();
-  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; // young female
-  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  // young male
-  return "shimmer"; // default young
-}
-function cleanForPrompt(str = "") {
-  return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
+  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer";
+  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";
+  return "alloy";
 }
 
-/* ---------------- AI Favorite Pick ---------------- */
-async function nextNewestPick() {
+function hashtagsForSong(title, artist) {
+  return [
+    `#${artist.replace(/\s+/g,"")}`,
+    `#${title.replace(/\s+/g,"")}`,
+    "#music", "#trend", "#nowplaying"
+  ];
+}
+
+/* ---------------- Spotify Top 50 Picker ---------------- */
+async function pickFromSpotify() {
   try {
-    // Randomize lens + genre + community
-    const lensOptions = [
-      "TikTok dance challenge",
-      "remix that’s trending",
-      "viral meme audio",
-      "chorus people duet",
-      "DJ edit on TikTok"
-    ];
-    const genreOptions = [
-      "hip hop",
-      "K-pop",
-      "EDM",
-      "R&B",
-      "indie pop",
-      "Latin reggaeton",
-      "trap",
-      "afrobeat"
-    ];
-    const communityOptions = [
-      "Latino TikTok communities",
-      "Black US/UK hip hop scenes",
-      "Korean and Japanese fandoms",
-      "African dance scenes",
-      "Indie/alt online kids"
-    ];
-
-    const randomLens = lensOptions[Math.floor(Math.random() * lensOptions.length)];
-    const randomGenre = genreOptions[Math.floor(Math.random() * genreOptions.length)];
-    const randomCommunity = communityOptions[Math.floor(Math.random() * communityOptions.length)];
-
-    // Step 1: ask GPT for a real trending song
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      temperature: 1.0,
-      messages: [
-        { role: "system", content: "You are a music trend parser following TikTok, Spotify, and YouTube Shorts trends." },
-        { 
-          role: "user", 
-          content: `Pick ONE real trending song that is viral right now. 
-          Avoid repeats from recent picks: ${JSON.stringify(lastSongs)}. 
-          Do not include banned songs: ${JSON.stringify(bannedSongs)}. 
-          This time, focus on a ${randomLens} in the ${randomGenre} scene, especially what ${randomCommunity} are pushing viral. 
-          Reply ONLY as JSON { "title": "...", "artist": "..." }.`
-        }
-      ]
+    const tokenRes = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": "Basic " + Buffer.from(
+          process.env.SPOTIFY_CLIENT_ID + ":" + process.env.SPOTIFY_CLIENT_SECRET
+        ).toString("base64")
+      },
+      body: "grant_type=client_credentials"
     });
+    const { access_token } = await tokenRes.json();
 
-    let pick;
-    try {
-      pick = JSON.parse(completion.choices[0].message.content || "{}");
-    } catch {
-      pick = { title: "Unknown", artist: "Unknown" };
-    }
-
-    // Step 2: generate fresh diverse description
-    const angleOptions = [
-      "lyrics everyone is quoting",
-      "beat/production that makes people move",
-      "TikTok dance challenge",
-      "remixes and edits",
-      "meme use in short videos",
-      "emotional vibe of the chorus",
-      "crowd reaction at concerts",
-      "short-form loop appeal"
-    ];
-    const perspectiveOptions = [
-      "as someone posting their first TikTok with it",
-      "as a fan screaming it with friends",
-      "as someone who just heard it in a club",
-      "as a bedroom listener looping it all night",
-      "as a creator explaining why it hits differently",
-      "as a dancer learning the routine"
-    ];
-    const emotionOptions = [
-      "hype and confident",
-      "nostalgic and dreamy",
-      "flirty and playful",
-      "rebellious and bold",
-      "sad but hopeful",
-      "funny and ironic"
-    ];
-
-    const randomAngle = angleOptions[Math.floor(Math.random() * angleOptions.length)];
-    const randomPerspective = perspectiveOptions[Math.floor(Math.random() * perspectiveOptions.length)];
-    const randomEmotion = emotionOptions[Math.floor(Math.random() * emotionOptions.length)];
-
-    let descOut = "";
-    try {
-      const desc = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 1.0,
-        messages: [
-          { role: "system", content: "Write like a Gen-Z fan describing why a viral song is blowing up." },
-          { 
-            role: "user", 
-            content: `Write a 60-80 word first-person description of "${pick.title}" by ${pick.artist}. 
-            Angle: ${randomAngle}. 
-            Perspective: ${randomPerspective}. 
-            Emotion: ${randomEmotion}. 
-            Keep it casual, Gen-Z tone, like a fan talking online.`
-          }
-        ]
-      });
-      descOut = desc.choices[0].message.content.trim();
-    } catch {
-      descOut = "This track is buzzing everywhere right now.";
-    }
-
-    // Step 3: update history
-    lastSongs.push({ title: pick.title, artist: pick.artist });
-    if (lastSongs.length > 5) lastSongs.shift();
-
-    return {
-      title: pick.title || "Unknown",
-      artist: pick.artist || "Unknown",
-      desc: descOut,
-      hashtags: ["#NowPlaying", "#TrendingNow", "#AIFavorite"]
-    };
+    const r = await fetch("https://api.spotify.com/v1/playlists/37i9dQZEVXbMDoHDwVN2tF/tracks", {
+      headers: { "Authorization": `Bearer ${access_token}` }
+    });
+    const j = await r.json();
+    const tracks = j.items.map(i => ({
+      title: i.track.name,
+      artist: i.track.artists.map(a => a.name).join(", ")
+    }));
+    return tracks[Math.floor(Math.random() * tracks.length)];
   } catch (e) {
-    return {
-      title: "Fallback Song",
-      artist: "AI DJ",
-      desc: "Couldn’t fetch the latest trend — but this track still sets the vibe.",
-      hashtags: ["#AITrend"]
-    };
+    console.error("Spotify pick failed:", e.message);
+    return { title: "Unknown", artist: "Unknown" };
   }
 }
 
-/* ---------------- Prompt builder ---------------- */
-function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = []) {
-  const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
+/* ---------------- Description Generator ---------------- */
+const AUDIENCE_RACES = [
+  "Black Gen-Z fan from LA",
+  "Korean K-pop fan",
+  "Latina TikTok creator",
+  "White college indie fan",
+  "Indian hip-hop dancer"
+];
+const MOODS = ["hyped", "nostalgic", "emo", "vibey", "confident"];
+
+async function generateDescription(title, artist) {
+  const persona = AUDIENCE_RACES[Math.floor(Math.random() * AUDIENCE_RACES.length)];
+  const mood = MOODS[Math.floor(Math.random() * MOODS.length)];
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: `Act as a ${persona} with a ${mood} personality. Write a first-person description (50+ words) reacting to the song.` },
+      { role: "user", content: `${title} by ${artist}` }
+    ]
+  });
+  return completion.choices[0].message.content;
+}
+
+/* ---------------- Image Generation ---------------- */
+async function generateImageUrl(prompt) {
+  try {
+    const out = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024",
+      response_format: "b64_json"
+    });
+    const d = out?.data?.[0];
+    return d?.b64_json ? `data:image/png;base64,${d.b64_json}` : d?.url || null;
+  } catch (e) {
+    console.error("[images]", e.message);
+    return null;
+  }
+}
+
+function stylizedPrompt(title, artist) {
   return [
     `Create a high-impact, shareable cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
-    `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
-    "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
-    "Absolutely no text, letters, numbers, logos, or watermarks.",
-    "Square 1:1 composition, clean crop; energetic but tasteful effects.",
     "The performer should appear as a young " + genderFromArtist(artist) + " Korean idol (Gen-Z style).",
-    ...s.tags.map(t => `• ${t}`),
-    ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
-    ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
+    "Absolutely no text, logos, or watermarks.",
+    "Square 1:1 composition, glossy aesthetic, fan-culture ready."
   ].join(" ");
 }
 
-/* ---------------- Image generation + fallbacks ---------------- */
-async function generateImageUrl(prompt) {
-  const models = ["gpt-image-1", "dall-e-3"];
-  for (const model of models) {
-    try {
-      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
-      const d = out?.data?.[0];
-      const b64 = d?.b64_json;
-      const url = d?.url;
-      if (b64) return `data:image/png;base64,${b64}`;
-      if (url)  return url;
-    } catch (e) {
-      lastImgErr = {
-        model,
-        status: e?.status || e?.response?.status || null,
-        message: e?.response?.data?.error?.message || e?.message || String(e),
-      };
-      console.error("[images]", lastImgErr);
-    }
-  }
-  return null;
-}
-
-/* ---------------- Diagnostics ---------------- */
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
-app.get("/diag/env", (_req,res) => res.json({
-  has_OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
-  has_OPENAI_ORG_ID:  Boolean(process.env.OPENAI_ORG_ID),
-  DEFAULT_STYLE,
-  node: process.version,
-}));
-app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
-
-/* ---------------- SSE stream ---------------- */
-app.get("/api/trend-stream", async (req, res) => {
-  res.set({
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no"
-  });
-  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
-  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
-
-  send("hello", { ok: true });
-
-  try {
-    const pick = await nextNewestPick();
-    const prompt = stylizedPrompt(pick.title, pick.artist);
-    send("status", { msg: "generating image…" });
-    const imageUrl = await generateImageUrl(prompt);
-    if (lastImgErr) send("diag", lastImgErr);
-
-    send("trend", pick);
-
-    if (imageUrl) {
-      imageCount += 1;
-      send("count", { count: imageCount });
-      send("image", { src: imageUrl });
-      send("status", { msg: "done" });
-      send("end", { ok:true });
-    } else {
-      send("status", { msg: "image unavailable." });
-      send("end", { ok:false });
-    }
-  } catch (e) {
-    send("status", { msg: `error: ${e?.message || e}` });
-    send("end", { ok:false });
-  } finally {
-    clearInterval(hb);
-    res.end();
-  }
-});
-
-/* ---------------- JSON one-shot ---------------- */
+/* ---------------- API Endpoints ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
-    const pick = await nextNewestPick();
+    const pick = await pickFromSpotify();
+    const desc = await generateDescription(pick.title, pick.artist);
     const prompt = stylizedPrompt(pick.title, pick.artist);
     const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
-
     res.json({
       title: pick.title,
       artist: pick.artist,
-      description: pick.desc,
-      hashtags: pick.hashtags,
-      image: imageUrl,
-      count: imageCount
+      description: desc,
+      hashtags: hashtagsForSong(pick.title, pick.artist),
+      image: imageUrl
     });
   } catch (e) {
-    res.json({
-      title: "Fresh Drop",
-      artist: "323KbabeAI",
-      description: "Text-only.",
-      hashtags: ["#music","#trend"],
-      image: null,
-      count: imageCount
-    });
+    res.json({ title: "Error", artist: "AI DJ", description: "Failed to fetch trend.", hashtags: ["#ai"], image: null });
   }
 });
 
-/* ---------------- Voice (TTS) ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
     if (!text) return res.status(400).json({ error: "Missing text" });
-
     const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: chooseVoice(req.query.artist || ""),
       input: text,
     });
-
     const buffer = Buffer.from(await out.arrayBuffer());
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(buffer);
@@ -361,9 +166,10 @@ app.get("/api/voice", async (req, res) => {
   }
 });
 
+app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
+
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`323drop live backend on :${PORT}`);
-  console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
+  console.log(`323drop backend running on :${PORT}`);
 });
