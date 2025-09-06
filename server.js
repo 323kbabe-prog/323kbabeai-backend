@@ -1,126 +1,3 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>323drop — gen z vibes</title>
-<style>
-  body {
-    margin:0;
-    color:#fff;
-    font-family: 'Inter', sans-serif;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    background: linear-gradient(-45deg, #ff00cc, #3333ff, #00ffee, #ff9900);
-    background-size: 400% 400%;
-    animation: gradientShift 12s ease infinite;
-  }
-  @keyframes gradientShift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-  }
-
-  #start-screen {
-    display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;
-  }
-  #start-btn {
-    background:linear-gradient(90deg,#00ffcc,#00aaff);
-    color:#000;font-size:22px;font-weight:bold;
-    padding:16px 32px;border:none;border-radius:30px;cursor:pointer;
-    box-shadow:0 0 20px rgba(0,255,204,.5);transition:transform .2s ease;
-    text-transform:lowercase;
-  }
-  #start-btn:hover { transform:scale(1.05); }
-
-  .card {
-    background:rgba(20,20,20,0.8);
-    border-radius:24px; padding:24px; margin:20px auto; max-width:600px;
-    backdrop-filter: blur(10px);
-    border:2px solid transparent;
-    box-shadow:0 0 25px rgba(0,255,204,.4);
-    animation: pulseBorder 3s infinite alternate;
-  }
-  @keyframes pulseBorder {
-    0% { box-shadow:0 0 15px rgba(255,0,255,.5); }
-    100% { box-shadow:0 0 35px rgba(0,255,255,.7); }
-  }
-
-  .title { font-size:26px; font-weight:800; margin:0.3em 0; color:#00ffcc; text-transform:lowercase; }
-  .artist { font-size:20px; font-weight:600; opacity:.95; color:#fff; text-transform:lowercase; }
-  .desc { margin:1em 0; font-size:15px; line-height:1.5; color:#eee; text-transform:lowercase; }
-
-  .badge {
-    display:inline-block; margin:6px; padding:6px 14px;
-    background:linear-gradient(135deg,#ff00ff,#00ffff);
-    border-radius:20px; font-size:13px; font-weight:bold; color:#000;
-    box-shadow:0 0 20px rgba(255,0,255,.6);
-    text-transform:lowercase;
-    animation: floaty 2s ease-in-out infinite alternate;
-  }
-  @keyframes floaty {
-    from { transform:translateY(0px); }
-    to { transform:translateY(-4px); }
-  }
-
-  .fallback {
-    color:#aaa; border:2px dashed #333; border-radius:20px; padding:20px; text-align:center;
-    font-style:italic; text-transform:lowercase;
-  }
-
-  .console {
-    font-family:monospace; background:#111; border-radius:16px; padding:12px;
-    margin:20px; max-height:200px; overflow:auto;
-    border:1px solid #222; box-shadow:inset 0 0 10px rgba(0,255,204,.2);
-    font-size:13px; color:#0ff; text-transform:lowercase;
-  }
-
-  #loading-overlay {
-    display:none;
-    position:fixed; top:0;left:0;width:100%;height:100%;
-    background:rgba(0,0,0,0.95);
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    font-size:26px;font-weight:bold;color:#00ffcc;
-    z-index:9999;opacity:0;transition:opacity 0.3s ease;
-    pointer-events:none;
-    text-transform:lowercase;
-  }
-  .spinner {
-    border:6px solid #222;
-    border-top:6px solid #00ffcc;
-    border-radius:50%;
-    width:60px;height:60px;
-    animation:spin 1s linear infinite;
-    margin-bottom:24px;
-    box-shadow:0 0 30px rgba(0,255,204,.8);
-  }
-  @keyframes spin { from {transform:rotate(0deg);} to {transform:rotate(360deg);} }
-</style>
-</head>
-<body>
-<div id="start-screen">
-  <button id="start-btn">🔊 start with voice</button>
-</div>
-
-<div id="app" style="display:none;width:100%;max-width:700px;">
-  <section class="card">
-    <div class="title" id="r-title">—</div>
-    <div class="artist" id="r-artist">—</div>
-    <p class="desc" id="r-desc">—</p>
-    <div id="voice-status"></div>
-    <div id="r-tags"></div>
-    <div id="r-count"></div>
-    <img id="r-img" alt="trend image" style="width:100%;display:none;border-radius:20px;margin-top:12px;" />
-    <div id="r-fallback" class="fallback">no image yet</div>
-  </section>
-  <div class="console" id="log"></div>
-</div>
-
-<div id="loading-overlay">
-  <div class="spinner"></div>
-  323kbabe searching...
-</div>
-
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const API_BASE = "https://three23kbabeai-backend.onrender.com"; 
@@ -150,7 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const r=await fetch(`${API_BASE}/api/trend?style=stan-photocard`,{cache:"no-store"});
       const j=await r.json();
 
-      // wrap content with emojis 🎶🔥✨
+      // 🔥 wrap everything in emojis
       t.textContent = `🎶✨🌈 ${j.title?.toLowerCase()||"untitled"} 💿🔥💖`;
       a.textContent = `👩‍🎤💎 ${j.artist?.toLowerCase()||"unknown"} 🌸🎤✨`;
       d.textContent = `💖🔥🦋 ${j.description?.toLowerCase()||""} 🌍✨🎶💅`;
@@ -201,5 +78,3 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 </script>
-</body>
-</html>
