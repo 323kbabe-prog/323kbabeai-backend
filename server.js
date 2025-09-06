@@ -1,17 +1,17 @@
-// server.js — 323drop Live (super fast image + text+image together -> speak)
-// Node >= 20, CommonJS
+// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + First-person description 50+ words + Safe prompt sanitization) 
+// Node >= 20, CommonJS  
 
 const express = require("express");
 const cors = require("cors");
 const OpenAI = require("openai");
+const { fetch } = require("undici");
 
 const app = express();
 
 /* ---------------- CORS ---------------- */
 const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
 app.use(cors({
-  origin: (origin, cb) =>
-    (!origin || ALLOW.includes(origin)) ? cb(null, true) : cb(new Error("CORS: origin not allowed")),
+  origin: (origin, cb) => (!origin || ALLOW.includes(origin)) ? cb(null, true) : cb(new Error("CORS: origin not allowed")),
   methods: ["GET", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
   maxAge: 86400,
@@ -27,7 +27,7 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 
-/* ---------------- Style Presets ---------------- */
+/* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
   "stan-photocard": {
     description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
@@ -40,11 +40,53 @@ const STYLE_PRESETS = {
       "clean studio sweep look; light falloff; subtle film grain",
       "original influencer look — not a specific or real celebrity face"
     ]
+  },
+  "poster-wall": {
+    description: "DIY bedroom poster wall — shareable fan collage energy",
+    tags: [
+      "layered paper textures with tape corners and torn edges",
+      "implied magazine clippings WITHOUT readable text or logos",
+      "pastel + neon accents, soft shadowed layers",
+      "subject in front with crisp rim light; background defocused collage",
+      "sparkle confetti and star cutouts; tasteful grain",
+      "original, non-celeb face with pop-idol charisma"
+    ]
+  },
+  "glow-stage-fan": {
+    description: "arena lightstick glow — concert-night fan moment",
+    tags: [
+      "dark stage background with colorful beam lights and haze",
+      "bokeh crowd dots; generic lightstick silhouettes (no branding)",
+      "hot rim light on hair and shoulders; motion vibe",
+      "bold neon accents (electric cyan, hot pink, laser purple)",
+      "no text, no numbers, no logos; original performer vibe"
+    ]
+  },
+  "y2k-stickerbomb": {
+    description: "Y2K candycore — playful stickerbomb pop aesthetic",
+    tags: [
+      "candy tones (cotton-candy pink, lime soda, sky cyan); glossy highlights",
+      "airbrush hearts and starbursts as shapes only",
+      "phone-camera flash look with mild bloom",
+      "floating sticker motifs around subject; keep face clean",
+      "no typography; original pop-idol energy"
+    ]
+  },
+  "street-fandom": {
+    description: "urban fan-cam energy — trendy city-night shareability",
+    tags: [
+      "city night backdrop; neon sign SHAPES only (no readable words)",
+      "low-angle phone-cam feel; slight motion trail on hair/jackets",
+      "wet asphalt reflections; cinematic contrast",
+      "light leak edges; tiny dust particles",
+      "original influencer face; not a real celebrity"
+    ]
   }
 };
+
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
-/* ---------------- First-person description ---------------- */
+/* ---------------- First-person description helper (50+ words) ---------------- */
 function makeFirstPersonDescription(title, artist) {
   const options = [
     `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. The melody sticks in my head like glue, and I can feel the energy pulsing through every beat. It makes me want to get up, move, and share it with everyone I know, because it really feels like a soundtrack to this exact moment in time.`,
@@ -56,7 +98,7 @@ function makeFirstPersonDescription(title, artist) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
-/* ---------------- Helpers ---------------- */
+/* ---------------- Sanitize titles/artists for image prompt ---------------- */
 function genderFromArtist(artist = "") {
   const lower = artist.toLowerCase();
   if (["ariana","sabrina","doja","rihanna","beyonce","taylor"].some(n => lower.includes(n))) return "female";
@@ -65,9 +107,9 @@ function genderFromArtist(artist = "") {
 }
 function chooseVoice(artist = "") {
   const lower = artist.toLowerCase();
-  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer";
-  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";
-  return "alloy";
+  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; // young female
+  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  // young male
+  return "alloy"; // fallback neutral
 }
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
@@ -86,8 +128,12 @@ async function nextNewestPick() {
 
     const text = completion.choices[0].message.content || "{}";
     let pick;
-    try { pick = JSON.parse(text); }
-    catch { pick = { title: "Unknown", artist: "Unknown" }; }
+    try {
+      pick = JSON.parse(text);
+    } catch (err) {
+      console.error("JSON parse error:", err.message, "Raw text:", text);
+      pick = { title: "Unknown", artist: "Unknown" };
+    }
 
     return {
       title: pick.title || "Unknown",
@@ -95,22 +141,25 @@ async function nextNewestPick() {
       desc: makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: ["#NowPlaying", "#AIFavorite"]
     };
-  } catch {
+  } catch (e) {
+    console.error("Favorite pick failed:", e.message);
     return { title: "Fallback Song", artist: "AI DJ", desc: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
   }
 }
 
 /* ---------------- Prompt builder ---------------- */
-function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE) {
+function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = []) {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
     `Create a high-impact, shareable cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
-    `Audience: Gen-Z fan culture. Visual goal: ${s.description}.`,
+    `Audience: Gen-Z fan culture (fans). Visual goal: ${s.description}.`,
     "Make an ORIGINAL pop-idol-adjacent face and styling; do NOT replicate any real person or celebrity.",
     "Absolutely no text, letters, numbers, logos, or watermarks.",
     "Square 1:1 composition, clean crop; energetic but tasteful effects.",
     "The performer should appear as a young " + genderFromArtist(artist) + " Korean idol (Gen-Z style).",
-    ...s.tags.map(t => `• ${t}`)
+    ...s.tags.map(t => `• ${t}`),
+    ...(extraVibe.length ? ["Vibe details:", ...extraVibe.map(t => `• ${t}`)] : []),
+    ...(inspoTags.length ? ["Inspiration notes (style only, not likeness):", ...inspoTags.map(t => `• ${t}`)] : [])
   ].join(" ");
 }
 
@@ -120,12 +169,16 @@ async function generateImageUrl(prompt) {
     const out = await openai.images.generate({
       model: "gpt-image-1",     // fastest model
       prompt,
-      size: "512x512",          // faster than 1024
+      size: "512x512",          // smaller = faster
       response_format: "url"    // skip base64 overhead
     });
     return out.data[0]?.url || null;
   } catch (e) {
-    lastImgErr = { model: "gpt-image-1", message: e.message };
+    lastImgErr = {
+      model: "gpt-image-1",
+      status: e?.status || e?.response?.status || null,
+      message: e?.response?.data?.error?.message || e?.message || String(e),
+    };
     console.error("[images]", lastImgErr);
     return null;
   }
@@ -135,12 +188,12 @@ async function generateImageUrl(prompt) {
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/diag/env", (_req,res) => res.json({
   has_OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
-  has_OPENAI_ORG_ID: Boolean(process.env.OPENAI_ORG_ID),
+  has_OPENAI_ORG_ID:  Boolean(process.env.OPENAI_ORG_ID),
   DEFAULT_STYLE,
   node: process.version,
 }));
 app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req, res) => res.json({ count: imageCount }));
+app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
 
 /* ---------------- SSE stream ---------------- */
 app.get("/api/trend-stream", async (req, res) => {
@@ -159,36 +212,24 @@ app.get("/api/trend-stream", async (req, res) => {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
     send("status", { msg: "generating image…" });
-
     const imageUrl = await generateImageUrl(prompt);
     if (lastImgErr) send("diag", lastImgErr);
 
+    send("trend", pick);
+
     if (imageUrl) {
       imageCount += 1;
-
-      // 🔑 Send text + image together
-      send("trend", {
-        title: pick.title,
-        artist: pick.artist,
-        description: pick.desc,
-        hashtags: pick.hashtags,
-        image: imageUrl,
-        count: imageCount
-      });
-
-      // 🔊 Cue TTS after both text + image
-      const speakText = `${pick.title} by ${pick.artist}. ${pick.desc}`;
-      send("speak", { text: speakText, artist: pick.artist });
-
+      send("count", { count: imageCount });
+      send("image", { src: imageUrl });
       send("status", { msg: "done" });
-      send("end", { ok: true });
+      send("end", { ok:true });
     } else {
       send("status", { msg: "image unavailable." });
-      send("end", { ok: false });
+      send("end", { ok:false });
     }
   } catch (e) {
     send("status", { msg: `error: ${e?.message || e}` });
-    send("end", { ok: false });
+    send("end", { ok:false });
   } finally {
     clearInterval(hb);
     res.end();
@@ -211,7 +252,7 @@ app.get("/api/trend", async (_req, res) => {
       image: imageUrl,
       count: imageCount
     });
-  } catch {
+  } catch (e) {
     res.json({
       title: "Fresh Drop",
       artist: "323KbabeAI",
@@ -231,7 +272,7 @@ app.get("/api/voice", async (req, res) => {
 
     const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: chooseVoice(req.query.artist || ""),
+      voice: chooseVoice(req.query.artist || ""), // can be changed to "verse", "sage", etc.
       input: text,
     });
 
@@ -247,6 +288,6 @@ app.get("/api/voice", async (req, res) => {
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`323drop live backend running on :${PORT}`);
+  console.log(`323drop live backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
 });
