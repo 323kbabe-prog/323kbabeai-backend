@@ -1,18 +1,18 @@
 {
-  "name": "three23kbabeai-backend",
+  "name": "323drop-backend",
   "version": "1.0.0",
-  "private": true,
+  "description": "323drop Live backend (Spotify Top 50 USA + Gender + Algorithm + Google TTS + OpenAI fallback)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20"
   },
   "dependencies": {
-    "express": "^4.19.2",
+    "@google-cloud/text-to-speech": "^5.6.0",
     "cors": "^2.8.5",
-    "openai": "^4.48.1",
-    "undici": "^6.19.8"
+    "express": "^4.19.2",
+    "openai": "^4.0.0"
   }
 }
