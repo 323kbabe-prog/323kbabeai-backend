@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + First-call cache + description fix 70+ words)
+// server.js — 323drop Live (AI Favorite Pick + Continuous Pre-gen + 70+ word descriptions)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -27,6 +27,7 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 let nextPickCache = null;
+let generatingNext = false;
 
 /* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
@@ -41,8 +42,7 @@ const STYLE_PRESETS = {
       "clean studio sweep look; light falloff; subtle film grain",
       "original influencer look — not a specific or real celebrity face"
     ]
-  },
-  // other styles unchanged...
+  }
 };
 
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
@@ -59,7 +59,7 @@ function makeFirstPersonDescription(title, artist) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
-/* ---------------- Gender & Voice helpers ---------------- */
+/* ---------------- Helpers ---------------- */
 function genderFromArtist(artist = "") {
   const lower = artist.toLowerCase();
   if (["ariana","sabrina","doja","rihanna","beyonce","taylor"].some(n => lower.includes(n))) return "female";
@@ -132,8 +132,10 @@ async function generateImageUrl(prompt) {
   return null;
 }
 
-/* ---------------- Pre-gen for first call only ---------------- */
+/* ---------------- Continuous pre-gen ---------------- */
 async function generateNextPick() {
+  if (generatingNext) return;
+  generatingNext = true;
   try {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
@@ -147,18 +149,19 @@ async function generateNextPick() {
       image: imageUrl,
       count: imageCount
     };
-  } catch {
-    nextPickCache = null;
+  } finally {
+    generatingNext = false;
   }
 }
 
-/* ---------------- JSON one-shot with first-call cache ---------------- */
+/* ---------------- JSON one-shot with continuous pre-gen ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
     let result;
     if (nextPickCache) {
       result = nextPickCache;
       nextPickCache = null;
+      generateNextPick(); // always prepare next one
     } else {
       const pick = await nextNewestPick();
       const prompt = stylizedPrompt(pick.title, pick.artist);
@@ -172,6 +175,7 @@ app.get("/api/trend", async (_req, res) => {
         image: imageUrl,
         count: imageCount
       };
+      generateNextPick(); // always prepare next one
     }
     res.json(result);
   } catch {
@@ -179,7 +183,7 @@ app.get("/api/trend", async (_req, res) => {
   }
 });
 
-/* ---------------- SSE stream ---------------- */
+/* ---------------- SSE stream with continuous pre-gen ---------------- */
 app.get("/api/trend-stream", async (req, res) => {
   res.set({
     "Content-Type": "text/event-stream",
@@ -193,22 +197,30 @@ app.get("/api/trend-stream", async (req, res) => {
   send("hello", { ok: true });
 
   try {
-    const pick = await nextNewestPick();
-    const prompt = stylizedPrompt(pick.title, pick.artist);
+    let pick;
+    if (nextPickCache) {
+      pick = nextPickCache;
+      nextPickCache = null;
+      generateNextPick(); // always prepare next one
+    } else {
+      pick = await nextNewestPick();
+      const prompt = stylizedPrompt(pick.title, pick.artist);
+      pick.image = await generateImageUrl(prompt);
+      if (pick.image) imageCount += 1;
+      pick.count = imageCount;
+      generateNextPick(); // always prepare next one
+    }
+
     send("trend", {
       title: pick.title,
       artist: pick.artist,
-      description: pick.description,   // ✅ unified with 70+ words
+      description: pick.description,
       hashtags: pick.hashtags
     });
-    send("status", { msg: "generating image…" });
-    const imageUrl = await generateImageUrl(prompt);
-    if (lastImgErr) send("diag", lastImgErr);
 
-    if (imageUrl) {
-      imageCount += 1;
-      send("count", { count: imageCount });
-      send("image", { src: imageUrl });
+    if (pick.image) {
+      send("count", { count: pick.count });
+      send("image", { src: pick.image });
       send("status", { msg: "done" });
       send("end", { ok:true });
     } else {
@@ -251,5 +263,5 @@ app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`323drop live backend on :${PORT}`);
-  generateNextPick(); // pre-gen only once at startup
+  generateNextPick(); // kick off the first one
 });
