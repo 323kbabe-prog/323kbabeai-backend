@@ -4,7 +4,6 @@
 const express = require("express");
 const cors = require("cors");
 const OpenAI = require("openai");
-const { fetch } = require("undici");
 const textToSpeech = require("@google-cloud/text-to-speech");
 
 const app = express();
@@ -18,7 +17,7 @@ app.use(cors({
   maxAge: 86400,
 }));
 
-/* ---------------- OpenAI (still used for images) ---------------- */
+/* ---------------- OpenAI (for images) ---------------- */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
@@ -61,7 +60,7 @@ const TOP50_USA = [
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
   { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
   { title: "Soda Pop", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  // ... rest of your list unchanged ...
+  // ... rest unchanged ...
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
