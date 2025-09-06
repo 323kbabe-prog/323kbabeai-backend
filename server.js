@@ -76,27 +76,53 @@ function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
-/* ---------------- AI Favorite Pick ---------------- */
+/* ---------------- Persona-based 2025-only song pick ---------------- */
 async function nextNewestPick() {
   try {
+    const persona = randomPersona();
+    const songs = await fetchAllSongs();
+
+    // enforce 2025-only by asking GPT to filter
+    const listText = songs.map((s, i) => `${i + 1}. ${s.title} – ${s.artist}`).join("\n");
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: "You are a music trend parser." },
-        { role: "user", content: "Pick ONE current trending song (Spotify or TikTok). Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }." }
+        { role: "system", content: "you are a music trend selector." },
+        {
+          role: "user",
+          content: `You are acting as ${persona}.
+From the following trending songs, pick ONE that was released or is trending in 2025. 
+Reply ONLY as JSON { "title": "...", "artist": "..." }.
+
+List:
+${listText}`
+        }
       ]
     });
-    const text = completion.choices[0].message.content || "{}";
+
     let pick;
-    try { pick = JSON.parse(text); } catch { pick = { title: "Unknown", artist: "Unknown" }; }
+    try {
+      pick = JSON.parse(completion.choices[0].message.content);
+    } catch {
+      // fallback: random
+      pick = songs[Math.floor(Math.random() * songs.length)];
+    }
+
     return {
       title: pick.title || "Unknown",
       artist: pick.artist || "Unknown",
       description: makeFirstPersonDescription(pick.title, pick.artist),
-      hashtags: ["#NowPlaying", "#AIFavorite"]
+      hashtags: ["#NowPlaying2025", "#AIFavorite"]
     };
-  } catch {
-    return { title: "Fallback Song", artist: "AI DJ", description: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
+  } catch (e) {
+    console.error("song pick failed:", e.message);
+    return {
+      title: "Fallback Song",
+      artist: "AI DJ",
+      description: "Fallback track when 2025 picks fail.",
+      hashtags: ["#AI"]
+    };
   }
 }
 
