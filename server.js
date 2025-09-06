@@ -39,18 +39,19 @@ async function googleTTS(text, style = "female") {
     audioConfig: {
       audioEncoding: "MP3",
       speakingRate: 1.0,
-      pitch: style === "female" ? 1.2 : 0.0
+      pitch: style === "female" ? 0.0 : -2.0 // neutral pitch range
     }
   });
 
+  console.log("🔎 Google TTS voice:", voice);
   if (!response.audioContent) {
-    console.error("⚠️ Google TTS returned no audio for:", text);
+    console.error("❌ No audio returned for:", text);
     return null;
   }
 
   console.log("✅ Google TTS audio length:", response.audioContent.length);
 
-  // Convert properly (base64 → buffer)
+  // Proper base64 decoding
   return Buffer.from(response.audioContent, "base64");
 }
 
@@ -60,12 +61,11 @@ let lastImgErr = null;
 let nextPickCache = null;
 let generatingNext = false;
 
-/* ---------------- Spotify Top 50 USA (Sept 2025, with gender) ---------------- */
+/* ---------------- Spotify Top 50 USA (short list demo, expand as needed) ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
-  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  // ... rest of Top 50 ...
+  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami", gender: "mixed" },
+  { title: "Your Idol", artist: "Saja Boys", gender: "male" },
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -75,7 +75,7 @@ function makeFirstPersonDescription(title, artist) {
 }
 function pickSongAlgorithm() {
   const weightTop = 0.7;
-  const pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
+  const pool = Math.random() < weightTop ? TOP50_USA.slice(0, 2) : TOP50_USA.slice(2);
   const idx = Math.floor(Math.pow(Math.random(), 1.5) * pool.length);
   return pool[idx];
 }
@@ -96,22 +96,6 @@ async function nextNewestPick() {
     description: makeFirstPersonDescription(pick.title, pick.artist),
     hashtags: ["#NowPlaying", "#AIFavorite"]
   };
-}
-
-/* ---------------- Image generation ---------------- */
-async function generateImageUrl(prompt) {
-  const models = ["gpt-image-1", "dall-e-3"];
-  for (const model of models) {
-    try {
-      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
-      const d = out?.data?.[0];
-      if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
-      if (d?.url) return d.url;
-    } catch (e) {
-      lastImgErr = { model, message: e?.message || String(e) };
-    }
-  }
-  return null;
 }
 
 /* ---------------- Continuous pre-gen ---------------- */
@@ -175,9 +159,21 @@ app.get("/api/voice", async (req, res) => {
   }
 });
 
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
+/* ---------------- Quick Google TTS Test ---------------- */
+app.get("/api/test-google", async (_req, res) => {
+  try {
+    const audioBuffer = await googleTTS("Google TTS is working right now", "female");
+    if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(audioBuffer);
+  } catch (e) {
+    console.error("Test TTS failed", e);
+    res.status(500).json({ error: "Test TTS failed" });
+  }
+});
+
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
