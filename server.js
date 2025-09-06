@@ -39,12 +39,19 @@ async function googleTTS(text, style = "female") {
     audioConfig: {
       audioEncoding: "MP3",
       speakingRate: 1.0,
-      pitch: style === "female" ? 1.5 : 0.0
+      pitch: style === "female" ? 1.2 : 0.0
     }
   });
 
-  // ✅ Proper buffer conversion
-  return Buffer.from(response.audioContent, "binary");
+  if (!response.audioContent) {
+    console.error("⚠️ Google TTS returned no audio for:", text);
+    return null;
+  }
+
+  console.log("✅ Google TTS audio length:", response.audioContent.length);
+
+  // ✅ Convert from base64
+  return Buffer.from(response.audioContent, "base64");
 }
 
 /* ---------------- State ---------------- */
@@ -135,37 +142,6 @@ async function nextNewestPick() {
   };
 }
 
-/* ---------------- Image generation ---------------- */
-async function generateImageUrl(prompt) {
-  const models = ["gpt-image-1", "dall-e-3"];
-  for (const model of models) {
-    try {
-      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
-      const d = out?.data?.[0];
-      if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
-      if (d?.url) return d.url;
-    } catch (e) {
-      lastImgErr = { model, message: e?.message || String(e) };
-    }
-  }
-  return null;
-}
-
-/* ---------------- Continuous pre-gen ---------------- */
-async function generateNextPick() {
-  if (generatingNext) return;
-  generatingNext = true;
-  try {
-    const pick = await nextNewestPick();
-    const prompt = `Cover image for ${pick.title} by ${pick.artist}`;
-    const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
-    nextPickCache = { ...pick, image: imageUrl, count: imageCount };
-  } finally {
-    generatingNext = false;
-  }
-}
-
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (_req, res) => {
   let result;
@@ -173,10 +149,7 @@ app.get("/api/trend", async (_req, res) => {
     result = nextPickCache; nextPickCache = null; generateNextPick();
   } else {
     const pick = await nextNewestPick();
-    const prompt = `Cover image for ${pick.title} by ${pick.artist}`;
-    const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
-    result = { ...pick, image: imageUrl, count: imageCount };
+    result = { ...pick, image: null, count: ++imageCount };
     generateNextPick();
   }
   res.json(result);
@@ -205,6 +178,10 @@ app.get("/api/voice", async (req, res) => {
       audioBuffer = await googleTTS(text, style);
     }
 
+    if (!audioBuffer) {
+      return res.status(500).json({ error: "No audio generated" });
+    }
+
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
   } catch (e) {
@@ -213,10 +190,11 @@ app.get("/api/voice", async (req, res) => {
   }
 });
 
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { console.log(`323drop live backend on :${PORT}`); generateNextPick(); });
+app.listen(PORT, () => {
+  console.log(`323drop live backend on :${PORT}`);
+  generateNextPick();
+});
