@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Faster image gen: gpt-image-1 + 512px + URL return)
+// server.js — 323drop Live (Timers + Summary log + Faster image gen + Young voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -40,15 +40,18 @@ function chooseVoice(artist = "") {
   const lower = artist.toLowerCase();
   if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer";
   if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";
-  return "shimmer";
+  return "shimmer"; // default young
 }
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
-/* ---------------- AI Favorite Pick ---------------- */
+/* ---------------- AI Favorite Pick (with timers + summary log) ---------------- */
 async function nextNewestPick() {
+  const totalStart = Date.now();
   try {
+    console.time("⏱ songPick");
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 1.0,
@@ -64,12 +67,16 @@ async function nextNewestPick() {
       ]
     });
 
+    console.timeEnd("⏱ songPick");
+
     let pick;
     try {
       pick = JSON.parse(completion.choices[0].message.content || "{}");
     } catch {
       pick = { title: "Fresh Drop", artist: "AI DJ" };
     }
+
+    console.time("⏱ description");
 
     let descOut = "";
     try {
@@ -90,8 +97,13 @@ async function nextNewestPick() {
       descOut = "This track is buzzing everywhere right now.";
     }
 
+    console.timeEnd("⏱ description");
+
     lastSongs.push({ title: pick.title, artist: pick.artist });
     if (lastSongs.length > 5) lastSongs.shift();
+
+    const totalTime = ((Date.now() - totalStart) / 1000).toFixed(2);
+    console.log(`🎵 ${pick.title} – ${pick.artist} | total: ${totalTime}s`);
 
     return {
       title: pick.title,
@@ -100,6 +112,7 @@ async function nextNewestPick() {
       hashtags: ["#NowPlaying", "#TrendingNow", "#AIFavorite"]
     };
   } catch (e) {
+    console.error("❌ songPick error:", e.message);
     return {
       title: "Fallback Song",
       artist: "AI DJ",
@@ -109,18 +122,24 @@ async function nextNewestPick() {
   }
 }
 
-/* ---------------- Image generation (faster) ---------------- */
+/* ---------------- Image generation with timer ---------------- */
 async function generateImageUrl(prompt) {
   try {
+    console.time("⏱ imageGen");
+
     const out = await openai.images.generate({
-      model: "gpt-image-1", // faster than dall-e-3
+      model: "gpt-image-1",
       prompt,
-      size: "512x512", // smaller, faster
-      response_format: "url" // direct CDN URL
+      size: "512x512",            // faster speed
+      response_format: "b64_json" // base64 so frontend works
     });
-    const url = out?.data?.[0]?.url;
-    return url || null;
+
+    console.timeEnd("⏱ imageGen");
+
+    const b64 = out?.data?.[0]?.b64_json;
+    return b64 ? `data:image/png;base64,${b64}` : null;
   } catch (e) {
+    console.timeEnd("⏱ imageGen");
     lastImgErr = {
       model: "gpt-image-1",
       status: e?.status || e?.response?.status || null,
