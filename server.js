@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fresh AI trending pick + Diverse descriptions + No repeats + Young voice)
+// server.js — 323drop Live (Fresh AI trending pick + Random lens + Random genre + No repeats + Diverse desc + Young voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -27,6 +27,7 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 let lastSongs = []; // keep last 5 picks
+let bannedSongs = ["Paint The Town Red"]; // avoid sticky repeats
 
 /* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
@@ -98,16 +99,37 @@ function chooseVoice(artist = "") {
   const lower = artist.toLowerCase();
   if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; // young female
   if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  // young male
-  return "shimmer"; // default young voice
+  return "shimmer"; // default young
 }
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
-/* ---------------- AI Favorite Pick (fresh, no repeats, diverse desc) ---------------- */
+/* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
-    // Step 1: pick a real trending song with variety
+    // Pick a random lens + genre to add variety
+    const lensOptions = [
+      "TikTok dance challenge",
+      "remix that’s trending",
+      "viral meme audio",
+      "chorus people duet",
+      "DJ edit on TikTok"
+    ];
+    const genreOptions = [
+      "hip hop",
+      "K-pop",
+      "EDM",
+      "R&B",
+      "indie pop",
+      "Latin reggaeton",
+      "trap",
+      "afrobeat"
+    ];
+    const randomLens = lensOptions[Math.floor(Math.random() * lensOptions.length)];
+    const randomGenre = genreOptions[Math.floor(Math.random() * genreOptions.length)];
+
+    // Step 1: ask GPT for a real trending song with variety
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 1.0,
@@ -116,7 +138,9 @@ async function nextNewestPick() {
         { 
           role: "user", 
           content: `Pick ONE real trending song that is viral right now. 
-          Avoid repeating any of these: ${JSON.stringify(lastSongs)}. 
+          Avoid repeats from recent picks: ${JSON.stringify(lastSongs)}. 
+          Do not include banned songs: ${JSON.stringify(bannedSongs)}. 
+          This time, focus on a ${randomLens} in the ${randomGenre} scene. 
           Reply ONLY as JSON { "title": "...", "artist": "..." }.`
         }
       ]
@@ -129,7 +153,7 @@ async function nextNewestPick() {
       pick = { title: "Unknown", artist: "Unknown" };
     }
 
-    // Step 2: more diverse description
+    // Step 2: fresh diverse description
     let descOut = "";
     try {
       const desc = await openai.chat.completions.create({
@@ -140,7 +164,7 @@ async function nextNewestPick() {
           { 
             role: "user", 
             content: `Write a unique 60-80 word first-person description of "${pick.title}" by ${pick.artist}. 
-            Focus on a different angle (lyrics, beat, dance challenge, meme use, emotional vibe, or TikTok reactions).`
+            Focus on different aspects each time (lyrics, beat, dance challenge, remix, meme use, emotional vibe, or TikTok reactions).`
           }
         ]
       });
@@ -149,7 +173,7 @@ async function nextNewestPick() {
       descOut = "This track is buzzing everywhere right now.";
     }
 
-    // Step 3: update lastSongs history (keep last 5)
+    // Step 3: update history
     lastSongs.push({ title: pick.title, artist: pick.artist });
     if (lastSongs.length > 5) lastSongs.shift();
 
