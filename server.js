@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + Fresh AI description + Safe prompt sanitization)
+// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + Fresh AI description + Safe prompt sanitization + No repeat)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -26,6 +26,7 @@ const openai = new OpenAI({
 /* ---------------- State ---------------- */
 let imageCount = 0;
 let lastImgErr = null;
+let lastSong = null; // remember last pick to avoid repeats
 
 /* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
@@ -103,22 +104,27 @@ function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
-/* ---------------- AI Favorite Pick (real trending songs only + fresh desc) ---------------- */
+/* ---------------- AI Favorite Pick (real trending + fresh desc + no repeat) ---------------- */
 async function nextNewestPick() {
   try {
-    // Step 1: pick a real trending song
+    // Step 1: pick a real trending song, avoiding repeats
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: "You are a music trend parser." },
-        { role: "user", content: "Pick ONE real trending song that is currently viral on TikTok, Spotify, or YouTube Shorts. Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }. Do not invent songs." }
+        { 
+          role: "user", 
+          content: `Pick ONE real trending song that is currently viral on TikTok, Spotify, or YouTube Shorts. 
+          Reply ONLY as JSON { "title": "...", "artist": "..." }. 
+          Do not invent songs. 
+          Do not repeat the last pick: ${lastSong ? JSON.stringify(lastSong) : "none"}.`
+        }
       ]
     });
 
-    const text = completion.choices[0].message.content || "{}";
     let pick;
     try {
-      pick = JSON.parse(text);
+      pick = JSON.parse(completion.choices[0].message.content || "{}");
     } catch {
       pick = { title: "Unknown", artist: "Unknown" };
     }
@@ -130,13 +136,16 @@ async function nextNewestPick() {
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: "Write like a Gen-Z fan describing a viral song." },
-          { role: "user", content: `Write a unique 60-80 word first-person description of why "${pick.title}" by ${pick.artist} is trending and how it feels to listen to it.` }
+          { role: "user", content: `Write a unique 60-80 word first-person description of why "${pick.title}" by ${pick.artist} is trending.` }
         ]
       });
       descOut = desc.choices[0].message.content.trim();
     } catch {
-      descOut = "This track is blowing up everywhere right now — the energy is unmatched.";
+      descOut = "This track is buzzing everywhere right now.";
     }
+
+    // save last song for repeat-prevention
+    lastSong = { title: pick.title, artist: pick.artist };
 
     return {
       title: pick.title || "Unknown",
