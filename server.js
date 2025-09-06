@@ -27,10 +27,10 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 
-/* ---------------- Gen-Z fans style system ---------------- */
+/* ---------------- Gen‑Z fans style system ---------------- */
 const STYLE_PRESETS = {
   "stan-photocard": {
-    description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
+    description: "lockscreen-ready idol photocard vibe for Gen‑Z fan culture",
     tags: [
       "square 1:1 cover, subject centered, shoulders-up or half-body",
       "flash-lit glossy skin with subtle K-beauty glow",
@@ -98,6 +98,8 @@ function makeFirstPersonDescription(title, artist) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
+/* ---------------- Sanitize titles/artists for image prompt ---------------- */
+
 /* ---------------- Gender & Voice helpers ---------------- */
 function genderFromArtist(artist = "") {
   const lower = artist.toLowerCase();
@@ -148,7 +150,7 @@ async function nextNewestPick() {
   }
 }
 
-/* ---------------- Prompt builder ---------------- */
+/* ---------------- Prompt builder (always Korean idol style + sanitized input) ---------------- */
 function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = []) {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
@@ -164,20 +166,20 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   ].join(" ");
 }
 
-/* ---------------- Image generation (changed: gpt-image-1 only) ---------------- */
+/* ---------------- Image generation + fallbacks ---------------- */
+/* ---------------- Image generation (single model) ---------------- */
 async function generateImageUrl(prompt) {
   try {
     const out = await openai.images.generate({
-      model: "gpt-image-1",   // ✅ only fastest model
+      model: "gpt-image-1",   // only one model now
       prompt,
-      size: "1024x1024",
-      response_format: "b64_json"
+      size: "1024x1024"       // fastest supported square size
+      // ⚠️ if you’re on the latest OpenAI SDK, remove response_format,
+      // it will return a .url by default
     });
     const d = out?.data?.[0];
-    const b64 = d?.b64_json;
-    const url = d?.url;
-    if (b64) return `data:image/png;base64,${b64}`;
-    if (url)  return url;
+    if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
+    if (d?.url) return d.url;
   } catch (e) {
     lastImgErr = {
       status: e?.status || e?.response?.status || null,
@@ -187,3 +189,114 @@ async function generateImageUrl(prompt) {
   }
   return null;
 }
+
+
+/* ---------------- Diagnostics ---------------- */
+app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
+app.get("/diag/env", (_req,res) => res.json({
+  has_OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
+  has_OPENAI_ORG_ID:  Boolean(process.env.OPENAI_ORG_ID),
+  DEFAULT_STYLE,
+  node: process.version,
+}));
+app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
+app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
+
+/* ---------------- SSE stream ---------------- */
+app.get("/api/trend-stream", async (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
+
+  send("hello", { ok: true });
+
+  try {
+    const pick = await nextNewestPick();
+    const prompt = stylizedPrompt(pick.title, pick.artist);
+    send("status", { msg: "generating image…" });
+    const imageUrl = await generateImageUrl(prompt);
+    if (lastImgErr) send("diag", lastImgErr);
+
+    send("trend", pick);
+
+    if (imageUrl) {
+      imageCount += 1;
+      send("count", { count: imageCount });
+      send("image", { src: imageUrl });
+      send("status", { msg: "done" });
+      send("end", { ok:true });
+    } else {
+      send("status", { msg: "image unavailable." });
+      send("end", { ok:false });
+    }
+  } catch (e) {
+    send("status", { msg: `error: ${e?.message || e}` });
+    send("end", { ok:false });
+  } finally {
+    clearInterval(hb);
+    res.end();
+  }
+});
+
+/* ---------------- JSON one-shot ---------------- */
+app.get("/api/trend", async (_req, res) => {
+  try {
+    const pick = await nextNewestPick();
+    const prompt = stylizedPrompt(pick.title, pick.artist);
+    const imageUrl = await generateImageUrl(prompt);
+    if (imageUrl) imageCount += 1;
+
+    res.json({
+      title: pick.title,
+      artist: pick.artist,
+      description: pick.desc,
+      hashtags: pick.hashtags,
+      image: imageUrl,
+      count: imageCount
+    });
+  } catch (e) {
+    res.json({
+      title: "Fresh Drop",
+      artist: "323KbabeAI",
+      description: "Text-only.",
+      hashtags: ["#music","#trend"],
+      image: null,
+      count: imageCount
+    });
+  }
+});
+
+
+/* ---------------- Voice (TTS) ---------------- */
+app.get("/api/voice", async (req, res) => {
+  try {
+    const text = req.query.text || "";
+    if (!text) return res.status(400).json({ error: "Missing text" });
+
+    const out = await openai.audio.speech.create({
+      model: "gpt-4o-mini-tts",
+      voice: chooseVoice(req.query.artist || ""), // can be changed to "verse", "sage", etc.
+      input: text,
+    });
+
+    const buffer = Buffer.from(await out.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(buffer);
+  } catch (e) {
+    console.error("[voice]", e.message);
+    res.status(500).json({ error: "TTS failed" });
+  }
+});
+
+
+/* ---------------- Start ---------------- */
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`323drop live backend on :${PORT}`);
+  console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
+});
