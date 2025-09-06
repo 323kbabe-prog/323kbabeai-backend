@@ -9,7 +9,7 @@ const app = express();
 app.use(cors());
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // set in your .env
+  apiKey: process.env.OPENAI_API_KEY, // set in your Render env
 });
 
 let imageCount = 0;
@@ -18,14 +18,13 @@ let lastImgErr = null;
 async function generateImageUrl(prompt) {
   try {
     const out = await openai.images.generate({
-      model: "gpt-image-1",   // fastest
+      model: "gpt-image-1",   // fastest model
       prompt,
-      size: "512x512",        // smaller = faster
-      response_format: "b64_json"
+      size: "512x512"         // smaller = faster
+      // no response_format (fixes 400 error)
     });
     const d = out?.data?.[0];
-    if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
-    if (d?.url) return d.url;
+    if (d?.url) return d.url;   // use URL directly
   } catch (e) {
     lastImgErr = { message: e?.message || String(e) };
     console.error("[images]", lastImgErr);
@@ -46,6 +45,9 @@ app.get("/api/test-image", async (req, res) => {
     error: lastImgErr
   });
 });
+
+// Diagnostics
+app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
