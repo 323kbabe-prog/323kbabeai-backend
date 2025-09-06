@@ -1,4 +1,4 @@
-// server.js — 323drop Final Backend (Spotify Top 50 + Audience Race + Mood Personality)
+// server.js — 323drop Final Backend (Spotify Top 50 + Audience Race + Mood Personality, DALL·E-only image)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -103,17 +103,16 @@ async function generateDescription(title, artist) {
   return completion.choices[0].message.content;
 }
 
-/* ---------------- Image Generation ---------------- */
+/* ---------------- Image Generation (DALL·E only) ---------------- */
 async function generateImageUrl(prompt) {
   try {
     const out = await openai.images.generate({
-      model: "gpt-image-1",
+      model: "dall-e-3",
       prompt,
-      size: "1024x1024",
-      response_format: "b64_json"
+      size: "1024x1024"
     });
     const d = out?.data?.[0];
-    return d?.b64_json ? `data:image/png;base64,${d.b64_json}` : d?.url || null;
+    return d?.url || null;
   } catch (e) {
     console.error("[images]", e.message);
     return null;
