@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen + OpenAI description/images + Google TTS voice + Failsafe)
+// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen pipeline + OpenAI description/images + Google TTS voice + Failsafe + Standalone /api/voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -50,16 +50,15 @@ async function googleTTS(text, style = "female") {
 }
 
 /* ---------------- State ---------------- */
-let imageCount = 0;
-let lastImgErr = null;
 let nextPickCache = null;
 let generatingNext = false;
+let lastImgErr = null;
 
 /* ---------------- Spotify Top 50 ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  // … include all 50 songs you listed …
+  // … include full 50 here …
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -68,8 +67,8 @@ async function makeFirstPersonDescription(title, artist) {
   try {
     const prompt = `
       Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
-      Mimic the artist’s mood and style (e.g., Billie Eilish = moody, Eminem = intense, Taylor Swift = storytelling).
-      Make it sound natural, Gen-Z relatable, and like the artist is speaking.
+      Mimic the artist’s personality, mood, and style.
+      Make it natural, Gen-Z relatable, and as if the artist themselves is talking.
     `;
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -198,6 +197,7 @@ app.get("/api/trend", async (req, res) => {
   }
 });
 
+/* ---------------- Standalone Voice Route ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
@@ -214,7 +214,6 @@ app.get("/api/voice", async (req, res) => {
 
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
