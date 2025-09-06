@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice + Spotify Top 50 fallback)
+// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice + Faster image gen timer)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -90,27 +90,6 @@ function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
-/* ---------------- Spotify Top 50 fallback ---------------- */
-async function getSpotifyTop50() {
-  try {
-    const res = await fetch("https://spotifycharts.com/regional/global/daily/latest/download");
-    const text = await res.text();
-    const rows = text.split("\n").slice(2); // skip headers
-    const songs = rows.map(r => r.split(",")).filter(r => r.length > 2);
-
-    if (songs.length > 0) {
-      const [ , title, artist ] = songs[Math.floor(Math.random() * songs.length)];
-      return { 
-        title: title.replace(/"/g, "").trim(), 
-        artist: artist.replace(/"/g, "").trim() 
-      };
-    }
-  } catch (err) {
-    console.error("⚠️ Spotify Top 50 fetch failed:", err.message);
-  }
-  return { title: "Fresh Drop", artist: "AI DJ" };
-}
-
 /* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
@@ -163,12 +142,9 @@ async function nextNewestPick() {
 
     let pick;
     try {
-      let raw = completion.choices[0].message.content || "{}";
-      raw = raw.replace(/```json|```/g, "").trim();
-      pick = JSON.parse(raw);
+      pick = JSON.parse(completion.choices[0].message.content || "{}");
     } catch {
-      console.error("⚠️ GPT parse failed, using Spotify Top 50 fallback");
-      pick = await getSpotifyTop50();
+      pick = { title: "Unknown", artist: "Unknown" };
     }
 
     // Step 2: generate fresh diverse description
@@ -230,8 +206,8 @@ async function nextNewestPick() {
     if (lastSongs.length > 5) lastSongs.shift();
 
     return {
-      title: pick.title,
-      artist: pick.artist,
+      title: pick.title || "Unknown",
+      artist: pick.artist || "Unknown",
       desc: descOut,
       hashtags: ["#NowPlaying", "#TrendingNow", "#AIFavorite"]
     };
@@ -261,27 +237,32 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   ].join(" ");
 }
 
-/* ---------------- Image generation + fallbacks ---------------- */
+/* ---------------- Image generation (single model + timer) ---------------- */
 async function generateImageUrl(prompt) {
-  const models = ["gpt-image-1", "dall-e-3"];
-  for (const model of models) {
-    try {
-      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
-      const d = out?.data?.[0];
-      const b64 = d?.b64_json;
-      const url = d?.url;
-      if (b64) return `data:image/png;base64,${b64}`;
-      if (url)  return url;
-    } catch (e) {
-      lastImgErr = {
-        model,
-        status: e?.status || e?.response?.status || null,
-        message: e?.response?.data?.error?.message || e?.message || String(e),
-      };
-      console.error("[images]", lastImgErr);
-    }
+  try {
+    console.time("⏱ imageGen");  // start timer
+
+    const out = await openai.images.generate({
+      model: "gpt-image-1",       // only one model now
+      prompt,
+      size: "1024x1024",          // keep quality
+      response_format: "b64_json" // base64 so frontend works
+    });
+
+    console.timeEnd("⏱ imageGen"); // log duration
+
+    const b64 = out?.data?.[0]?.b64_json;
+    return b64 ? `data:image/png;base64,${b64}` : null;
+  } catch (e) {
+    console.timeEnd("⏱ imageGen"); // ensure timer ends
+    lastImgErr = {
+      model: "gpt-image-1",
+      status: e?.status || e?.response?.status || null,
+      message: e?.response?.data?.error?.message || e?.message || String(e),
+    };
+    console.error("[images]", lastImgErr);
+    return null;
   }
-  return null;
 }
 
 /* ---------------- Diagnostics ---------------- */
