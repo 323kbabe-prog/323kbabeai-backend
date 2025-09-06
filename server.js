@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Safe version: JSON guards + fallbacks + no repeats + young voice)
+// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -18,11 +18,6 @@ app.use(cors({
 }));
 
 /* ---------------- OpenAI ---------------- */
-if (!process.env.OPENAI_API_KEY) {
-  console.error("❌ Missing OPENAI_API_KEY env var.");
-  process.exit(1);
-}
-
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
@@ -54,7 +49,7 @@ function cleanForPrompt(str = "") {
 /* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
-    // Step 1: Ask GPT for trending song + metadata
+    // Step 1: ask GPT for a real trending song + metadata
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 1.0,
@@ -79,14 +74,8 @@ async function nextNewestPick() {
 
     let pick;
     try {
-      const raw = completion.choices?.[0]?.message?.content?.trim();
-      pick = raw ? JSON.parse(raw) : null;
-    } catch (err) {
-      console.error("⚠️ JSON parse failed:", err.message);
-      pick = null;
-    }
-
-    if (!pick || !pick.title) {
+      pick = JSON.parse(completion.choices[0].message.content || "{}");
+    } catch {
       pick = { 
         title: "Fresh Drop", 
         artist: "AI DJ", 
@@ -96,7 +85,38 @@ async function nextNewestPick() {
       };
     }
 
-    // Step 2: Generate description
+    // Step 2: generate diverse description
+    const angleOptions = [
+      "lyrics everyone is quoting",
+      "beat/production that makes people move",
+      "TikTok dance challenge",
+      "remixes and edits",
+      "meme use in short videos",
+      "emotional vibe of the chorus",
+      "crowd reaction at concerts",
+      "short-form loop appeal"
+    ];
+    const perspectiveOptions = [
+      "as someone posting their first TikTok with it",
+      "as a fan screaming it with friends",
+      "as someone who just heard it in a club",
+      "as a bedroom listener looping it all night",
+      "as a creator explaining why it hits differently",
+      "as a dancer learning the routine"
+    ];
+    const emotionOptions = [
+      "hype and confident",
+      "nostalgic and dreamy",
+      "flirty and playful",
+      "rebellious and bold",
+      "sad but hopeful",
+      "funny and ironic"
+    ];
+
+    const randomAngle = angleOptions[Math.floor(Math.random() * angleOptions.length)];
+    const randomPerspective = perspectiveOptions[Math.floor(Math.random() * perspectiveOptions.length)];
+    const randomEmotion = emotionOptions[Math.floor(Math.random() * emotionOptions.length)];
+
     let descOut = "";
     try {
       const desc = await openai.chat.completions.create({
@@ -107,16 +127,15 @@ async function nextNewestPick() {
           { 
             role: "user", 
             content: `Write a 60-80 word first-person description of "${pick.title}" by ${pick.artist}. 
-            Lens: ${pick.lens}. 
-            Genre: ${pick.genre}. 
-            Community: ${pick.community}. 
-            Keep it Gen-Z casual. No filler like "omg", "unknown", "idk".`
+            Angle: ${randomAngle}. 
+            Perspective: ${randomPerspective}. 
+            Emotion: ${randomEmotion}. 
+            Keep it casual, Gen-Z tone, like a fan talking online.`
           }
         ]
       });
-      descOut = desc.choices?.[0]?.message?.content?.trim() || "";
-    } catch (err) {
-      console.error("⚠️ Description failed:", err.message);
+      descOut = desc.choices[0].message.content.trim();
+    } catch {
       descOut = "This track is buzzing everywhere right now.";
     }
 
@@ -134,7 +153,6 @@ async function nextNewestPick() {
       hashtags: ["#NowPlaying", "#TrendingNow", "#AIFavorite"]
     };
   } catch (e) {
-    console.error("❌ nextNewestPick error:", e.message);
     return {
       title: "Fallback Song",
       artist: "AI DJ",
@@ -147,7 +165,7 @@ async function nextNewestPick() {
   }
 }
 
-/* ---------------- Image generation + fallbacks ---------------- */
+/* ---------------- Image generation ---------------- */
 async function generateImageUrl(prompt) {
   const models = ["gpt-image-1", "dall-e-3"];
   for (const model of models) {
