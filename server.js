@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + OpenAI description + OpenAI images + Google TTS voice + Debug logs)
+// server.js — 323drop Live (Spotify Top 50 USA + OpenAI description + OpenAI images + Google TTS voice + Smart refresh)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -72,8 +72,8 @@ async function makeFirstPersonDescription(title, artist) {
   try {
     const prompt = `
       Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
-      Mimic the artist’s personality, mood, and style (e.g., Billie Eilish = moody, Eminem = intense, Taylor Swift = storytelling).
-      Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
+      Mimic the artist’s personality, mood, and style.
+      Make it natural, Gen-Z relatable, and as if the artist themselves is talking.
     `;
 
     const completion = await openai.chat.completions.create({
@@ -129,7 +129,7 @@ app.get("/api/trend", async (req, res) => {
     // 2. Description
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    // 3. Image (fixed: no response_format)
+    // 3. Image
     let imageUrl = null;
     try {
       const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
@@ -155,7 +155,7 @@ app.get("/api/trend", async (req, res) => {
       console.error("❌ Voice gen failed:", e.message);
     }
 
-    // 5. Return JSON
+    // 5. Response with smart refresh
     res.json({
       title: pick.title,
       artist: pick.artist,
@@ -164,7 +164,7 @@ app.get("/api/trend", async (req, res) => {
       hashtags: ["#NowPlaying", "#AIFavorite"],
       image: imageUrl,
       voice: voiceBase64,
-      refresh: 3000
+      refresh: voiceBase64 ? 3000 : null // ✅ only refresh if voice exists
     });
   } catch (e) {
     console.error("❌ Trend pipeline failed:", e);
