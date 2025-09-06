@@ -1,12 +1,21 @@
-// songPicker.js — multi-source song picking algorithm with persona bias
+// server.js — multi-source persona song picker
 // Node >= 20, CommonJS
 
+const express = require("express");
+const cors = require("cors");
 const OpenAI = require("openai");
 
+const app = express();
+
+/* ---------------- CORS ---------------- */
+app.use(cors({ origin: "*", methods: ["GET"] }));
+
 /* ---------------- OpenAI ---------------- */
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ Missing OPENAI_API_KEY");
+  process.exit(1);
+}
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /* ---------------- Personas ---------------- */
 const personas = [
@@ -105,16 +114,34 @@ ${listText}`
   return pick;
 }
 
-/* ---------------- Main exported function ---------------- */
-async function getSongPick() {
-  const persona = randomPersona();
-  const songs = await fetchAllSongs();
-  const pick = await pickSongWithPersona(persona, songs);
-  return {
-    title: pick.title,
-    artist: pick.artist,
-    persona
-  };
-}
+/* ---------------- Main API Endpoint ---------------- */
+app.get("/api/trend", async (_req, res) => {
+  try {
+    const persona = randomPersona();
+    const songs = await fetchAllSongs();
+    const pick = await pickSongWithPersona(persona, songs);
 
-module.exports = { getSongPick };
+    res.json({
+      title: pick.title,
+      artist: pick.artist,
+      persona
+    });
+  } catch (e) {
+    console.error("trend error", e);
+    res.json({
+      title: "fallback song",
+      artist: "ai dj",
+      persona: "neutral"
+    });
+  }
+});
+
+/* ---------------- Health ---------------- */
+app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
+app.get("/", (_req, res) => res.json({ ok: true })); // root check for Render
+
+/* ---------------- Start ---------------- */
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`✅ song picker live on :${PORT}`);
+});
