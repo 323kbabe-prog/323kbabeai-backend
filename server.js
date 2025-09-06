@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Continuous Pre-gen + 70+ word descriptions)
+// server.js — 323drop Live (Persona Song Choose Algorithm + Continuous Pre-gen + 70+ word descriptions)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -44,7 +44,6 @@ const STYLE_PRESETS = {
     ]
   }
 };
-
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
 /* ---------------- First-person description helper (70+ words) ---------------- */
@@ -68,35 +67,124 @@ function genderFromArtist(artist = "") {
 }
 function chooseVoice(artist = "") {
   const lower = artist.toLowerCase();
-  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; 
-  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  
-  return "alloy"; 
+  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer";
+  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";
+  return "alloy";
 }
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
-/* ---------------- AI Favorite Pick ---------------- */
+/* ---------------- Personas ---------------- */
+const personas = [
+  "17-year-old black male hip-hop fan in atlanta",
+  "22-year-old korean female k-pop stan in seoul",
+  "30-year-old latino reggaeton fan in los angeles",
+  "40-year-old white indie-rock dad in chicago",
+  "19-year-old indian edm raver in mumbai",
+  "25-year-old japanese anime-pop fan in tokyo",
+  "28-year-old african female afrobeats lover in lagos"
+];
+function randomPersona() {
+  return personas[Math.floor(Math.random() * personas.length)];
+}
+
+/* ---------------- Mock trending fetchers (replace with real APIs later) ---------------- */
+async function fetchSpotifyTop() {
+  return [
+    { title: "Paint The Town Red", artist: "Doja Cat" },
+    { title: "Feather", artist: "Sabrina Carpenter" }
+  ];
+}
+async function fetchAppleTop() {
+  return [
+    { title: "Water", artist: "Tyla" },
+    { title: "Good Luck, Babe!", artist: "Chappell Roan" }
+  ];
+}
+async function fetchYouTubeTop() {
+  return [
+    { title: "Espresso", artist: "Sabrina Carpenter" },
+    { title: "Lose Control", artist: "Teddy Swims" }
+  ];
+}
+async function fetchTikTokViral() {
+  return [
+    { title: "Not Like Us", artist: "Kendrick Lamar" },
+    { title: "Please Please Please", artist: "Sabrina Carpenter" }
+  ];
+}
+async function fetchGoogleTrends() {
+  return [
+    { title: "Gata Only", artist: "FloyyMenor ft. Cris MJ" },
+    { title: "Desire", artist: "Calvin Harris & Sam Smith" }
+  ];
+}
+
+/* ---------------- Merge lists ---------------- */
+async function fetchAllSongs() {
+  const all = [
+    ...(await fetchSpotifyTop()),
+    ...(await fetchAppleTop()),
+    ...(await fetchYouTubeTop()),
+    ...(await fetchTikTokViral()),
+    ...(await fetchGoogleTrends())
+  ];
+  const seen = new Set();
+  return all.filter(song => {
+    const key = `${song.title}-${song.artist}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/* ---------------- Persona-based song pick ---------------- */
 async function nextNewestPick() {
   try {
+    const persona = randomPersona();
+    const songs = await fetchAllSongs();
+    const listText = songs
+      .map((s, i) => `${i + 1}. ${s.title} – ${s.artist}`)
+      .join("\n");
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: "You are a music trend parser." },
-        { role: "user", content: "Pick ONE current trending song (Spotify or TikTok). Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }." }
+        { role: "system", content: "you are a music trend selector." },
+        {
+          role: "user",
+          content: `You are acting as ${persona}.
+From the following trending songs, pick ONE that best matches your vibe.
+Reply ONLY as JSON { "title": "...", "artist": "..." }.
+
+List:
+${listText}`
+        }
       ]
     });
-    const text = completion.choices[0].message.content || "{}";
+
     let pick;
-    try { pick = JSON.parse(text); } catch { pick = { title: "Unknown", artist: "Unknown" }; }
+    try {
+      pick = JSON.parse(completion.choices[0].message.content);
+    } catch {
+      pick = songs[Math.floor(Math.random() * songs.length)];
+    }
+
     return {
       title: pick.title || "Unknown",
       artist: pick.artist || "Unknown",
       description: makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: ["#NowPlaying", "#AIFavorite"]
     };
-  } catch {
-    return { title: "Fallback Song", artist: "AI DJ", description: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
+  } catch (e) {
+    console.error("song pick failed:", e.message);
+    return {
+      title: "Fallback Song",
+      artist: "AI DJ",
+      description: "I just played this fallback track and it's still a vibe.",
+      hashtags: ["#AI"]
+    };
   }
 }
 
@@ -206,62 +294,4 @@ app.get("/api/trend-stream", async (req, res) => {
       pick = await nextNewestPick();
       const prompt = stylizedPrompt(pick.title, pick.artist);
       pick.image = await generateImageUrl(prompt);
-      if (pick.image) imageCount += 1;
-      pick.count = imageCount;
-      generateNextPick(); // always prepare next one
-    }
-
-    send("trend", {
-      title: pick.title,
-      artist: pick.artist,
-      description: pick.description,
-      hashtags: pick.hashtags
-    });
-
-    if (pick.image) {
-      send("count", { count: pick.count });
-      send("image", { src: pick.image });
-      send("status", { msg: "done" });
-      send("end", { ok:true });
-    } else {
-      send("status", { msg: "image unavailable." });
-      send("end", { ok:false });
-    }
-  } catch (e) {
-    send("status", { msg: `error: ${e?.message || e}` });
-    send("end", { ok:false });
-  } finally {
-    clearInterval(hb);
-    res.end();
-  }
-});
-
-/* ---------------- Voice (TTS) ---------------- */
-app.get("/api/voice", async (req, res) => {
-  try {
-    const text = req.query.text || "";
-    if (!text) return res.status(400).json({ error: "Missing text" });
-    const out = await openai.audio.speech.create({
-      model: "gpt-4o-mini-tts",
-      voice: chooseVoice(req.query.artist || ""),
-      input: text,
-    });
-    const buffer = Buffer.from(await out.arrayBuffer());
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(buffer);
-  } catch {
-    res.status(500).json({ error: "TTS failed" });
-  }
-});
-
-/* ---------------- Diagnostics ---------------- */
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
-app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
-
-/* ---------------- Start ---------------- */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`323drop live backend on :${PORT}`);
-  generateNextPick(); // kick off the first one
-});
+      if (pick.image)
