@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Pre-generation cache)
+// server.js — 323drop Live (AI Favorite Pick + Pre-gen cache for /api/trend)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -26,10 +26,10 @@ const openai = new OpenAI({
 /* ---------------- State ---------------- */
 let imageCount = 0;
 let lastImgErr = null;
-let nextPickCache = null;   // holds pre-generated pick for next request
-let generatingNext = false; // lock so we don’t double-generate
+let nextPickCache = null;
+let generatingNext = false;
 
-/* ---------------- Style presets ---------------- */
+/* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
   "stan-photocard": {
     description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
@@ -42,11 +42,12 @@ const STYLE_PRESETS = {
       "clean studio sweep look; light falloff; subtle film grain",
       "original influencer look — not a specific or real celebrity face"
     ]
-  }
+  },
+  // ... other styles unchanged ...
 };
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
-/* ---------------- Helpers ---------------- */
+/* ---------------- First-person description helper ---------------- */
 function makeFirstPersonDescription(title, artist) {
   const options = [
     `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. The melody sticks in my head like glue, and I can feel the energy pulsing through every beat. It makes me want to get up, move, and share it with everyone I know, because it really feels like a soundtrack to this exact moment in time.`,
@@ -58,6 +59,7 @@ function makeFirstPersonDescription(title, artist) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
+/* ---------------- Gender & Voice helpers ---------------- */
 function genderFromArtist(artist = "") {
   const lower = artist.toLowerCase();
   if (["ariana","sabrina","doja","rihanna","beyonce","taylor"].some(n => lower.includes(n))) return "female";
@@ -74,6 +76,7 @@ function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
+/* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
     const completion = await openai.chat.completions.create({
@@ -83,15 +86,9 @@ async function nextNewestPick() {
         { role: "user", content: "Pick ONE current trending song (Spotify or TikTok). Reply ONLY as JSON { \"title\": \"...\", \"artist\": \"...\" }." }
       ]
     });
-
     const text = completion.choices[0].message.content || "{}";
     let pick;
-    try {
-      pick = JSON.parse(text);
-    } catch {
-      pick = { title: "Unknown", artist: "Unknown" };
-    }
-
+    try { pick = JSON.parse(text); } catch { pick = { title: "Unknown", artist: "Unknown" }; }
     return {
       title: pick.title || "Unknown",
       artist: pick.artist || "Unknown",
@@ -103,6 +100,7 @@ async function nextNewestPick() {
   }
 }
 
+/* ---------------- Prompt builder ---------------- */
 function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE) {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
@@ -116,6 +114,7 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE) {
   ].join(" ");
 }
 
+/* ---------------- Image generation ---------------- */
 async function generateImageUrl(prompt) {
   const models = ["gpt-image-1", "dall-e-3"];
   for (const model of models) {
@@ -133,7 +132,7 @@ async function generateImageUrl(prompt) {
   return null;
 }
 
-/* ---------------- Pre-generation Cache ---------------- */
+/* ---------------- Pre-generation cache ---------------- */
 async function generateNextPick() {
   if (generatingNext) return;
   generatingNext = true;
@@ -143,36 +142,39 @@ async function generateNextPick() {
     const imageUrl = await generateImageUrl(prompt);
     if (imageUrl) imageCount += 1;
     nextPickCache = { ...pick, image: imageUrl, count: imageCount };
-  } catch (e) {
-    console.error("Pre-gen failed:", e.message);
-    nextPickCache = null;
   } finally {
     generatingNext = false;
   }
 }
 
-/* ---------------- Endpoints ---------------- */
+/* ---------------- Diagnostics ---------------- */
+app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
+app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
+app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
+
+/* ---------------- JSON one-shot with pre-gen ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
     let result;
     if (nextPickCache) {
       result = nextPickCache;
-      nextPickCache = null; // consume cache
-      generateNextPick();   // immediately start preparing the next one
+      nextPickCache = null;
+      generateNextPick(); // start preparing next one
     } else {
       const pick = await nextNewestPick();
       const prompt = stylizedPrompt(pick.title, pick.artist);
       const imageUrl = await generateImageUrl(prompt);
       if (imageUrl) imageCount += 1;
       result = { ...pick, image: imageUrl, count: imageCount };
-      generateNextPick(); // prepare for next time
+      generateNextPick(); // prepare next
     }
     res.json(result);
-  } catch (e) {
+  } catch {
     res.json({ title: "Fresh Drop", artist: "323KbabeAI", description: "Text-only.", hashtags: ["#music","#trend"], image: null, count: imageCount });
   }
 });
 
+/* ---------------- Voice (unchanged) ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
@@ -185,18 +187,14 @@ app.get("/api/voice", async (req, res) => {
     const buffer = Buffer.from(await out.arrayBuffer());
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(buffer);
-  } catch (e) {
+  } catch {
     res.status(500).json({ error: "TTS failed" });
   }
 });
-
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
-app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`323drop live backend on :${PORT}`);
-  generateNextPick(); // kick off the first pre-generation
+  generateNextPick(); // kick off pre-generation at startup
 });
