@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + OpenAI description + OpenAI images + Google TTS voice + Pre-gen)
+// server.js — 323drop Live (Spotify Top 50 USA + OpenAI description + OpenAI images + Google TTS voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -17,7 +17,7 @@ app.use(cors({
   maxAge: 86400,
 }));
 
-/* ---------------- OpenAI (for text + images) ---------------- */
+/* ---------------- OpenAI ---------------- */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
@@ -36,7 +36,7 @@ async function googleTTS(text, style = "female") {
   const [response] = await googleTTSClient.synthesizeSpeech({
     input: { text },
     voice,
-    audioConfig: { audioEncoding: "MP3", speakingRate: 1.0, pitch: 0.0 }
+    audioConfig: { audioEncoding: "MP3" }
   });
 
   if (!response.audioContent) {
@@ -45,16 +45,13 @@ async function googleTTS(text, style = "female") {
   }
 
   console.log("✅ Google TTS audio length:", response.audioContent.length);
-  return Buffer.from(response.audioContent);
+  return Buffer.from(response.audioContent, "binary");
 }
 
 /* ---------------- State ---------------- */
-let imageCount = 0;
 let lastImgErr = null;
-let nextPickCache = null;
-let generatingNext = false;
 
-/* ---------------- Spotify Top 50 USA (Sept 2025, with gender) ---------------- */
+/* ---------------- Spotify Top 50 USA ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
@@ -143,99 +140,65 @@ function pickSongAlgorithm() {
 function stylizedPrompt(title, artist, gender) {
   return [
     `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
-    `Audience: Gen-Z fan culture. Visual goal: lockscreen-ready idol photocard vibe.`,
+    "Audience: Gen-Z fan culture. Visual goal: lockscreen-ready idol photocard vibe.",
     "Make an ORIGINAL idol-like face and styling; do NOT replicate real celebrities.",
-    "No text, logos, or watermarks.",
+    "Absolutely no text, logos, or watermarks.",
     "Square 1:1 composition.",
-    `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`
+    `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`,
+    "• square 1:1 cover, subject centered, shoulders-up or half-body",
+    "• flash-lit glossy skin with subtle K-beauty glow",
+    "• pastel gradient background (milk pink, baby blue, lilac) with haze",
+    "• sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
+    "• tiny glitter bokeh and lens glints",
+    "• clean studio sweep look; light falloff; subtle film grain",
+    "• original influencer look — not a specific or real celebrity face"
   ].join(" ");
 }
 
-/* ---------------- AI Favorite Pick ---------------- */
-async function nextNewestPick() {
-  const pick = pickSongAlgorithm();
-  const description = await makeFirstPersonDescription(pick.title, pick.artist);
-  return {
-    title: pick.title,
-    artist: pick.artist,
-    gender: pick.gender,
-    description,
-    hashtags: ["#NowPlaying", "#AIFavorite"]
-  };
-}
-
-/* ---------------- Image generation ---------------- */
-async function generateImageUrl(prompt) {
-  const models = ["gpt-image-1", "dall-e-3"];
-  for (const model of models) {
-    try {
-      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
-      const d = out?.data?.[0];
-      if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
-      if (d?.url) return d.url;
-    } catch (e) {
-      lastImgErr = { model, message: e?.message || String(e) };
-    }
-  }
-  return null;
-}
-
-/* ---------------- Continuous pre-gen ---------------- */
-async function generateNextPick() {
-  if (generatingNext) return;
-  generatingNext = true;
-  try {
-    const pick = await nextNewestPick();
-    const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
-    const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
-    nextPickCache = { ...pick, image: imageUrl, count: imageCount };
-  } finally {
-    generatingNext = false;
-  }
-}
-
-/* ---------------- API Routes ---------------- */
+/* ---------------- API: Full Pipeline ---------------- */
 app.get("/api/trend", async (_req, res) => {
-  let result;
-  if (nextPickCache) {
-    result = nextPickCache; nextPickCache = null; generateNextPick();
-  } else {
-    const pick = await nextNewestPick();
-    const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
-    const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
-    result = { ...pick, image: imageUrl, count: imageCount };
-    generateNextPick();
-  }
-  res.json(result);
-});
-
-/* ---------------- Voice (Google TTS only) ---------------- */
-app.get("/api/voice", async (req, res) => {
   try {
-    const text = req.query.text || "";
-    const style = req.query.style || "female"; // female | male
-    if (!text) return res.status(400).json({ error: "Missing text" });
+    // 1. Pick song
+    const pick = pickSongAlgorithm();
 
-    const audioBuffer = await googleTTS(text, style);
-    if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
+    // 2. Generate description
+    const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(audioBuffer);
+    // 3. Generate image
+    const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
+    const out = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024",
+      response_format: "b64_json"
+    });
+    const d = out?.data?.[0];
+    const imageUrl = d?.b64_json ? `data:image/png;base64,${d.b64_json}` : null;
+
+    // 4. Generate voice from description
+    const audioBuffer = await googleTTS(description, "female");
+    const voiceBase64 = audioBuffer ? audioBuffer.toString("base64") : null;
+
+    // 5. Return JSON with everything
+    res.json({
+      title: pick.title,
+      artist: pick.artist,
+      gender: pick.gender,
+      description,
+      hashtags: ["#NowPlaying", "#AIFavorite"],
+      image: imageUrl,
+      voice: voiceBase64 ? `data:audio/mpeg;base64,${voiceBase64}` : null,
+      refresh: 3000
+    });
   } catch (e) {
-    console.error("Google TTS failed", e);
-    res.status(500).json({ error: "TTS failed" });
+    console.error("❌ Trend pipeline failed:", e);
+    res.status(500).json({ error: "Pipeline failed" });
   }
 });
 
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
+/* ---------------- Health ---------------- */
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { 
-  console.log(`323drop live backend on :${PORT}`); 
-  generateNextPick(); 
-});
+app.listen(PORT, () => console.log(`323drop live backend on :${PORT}`));
