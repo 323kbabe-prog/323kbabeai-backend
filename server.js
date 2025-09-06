@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + First-call cache + description fix)
+// server.js — 323drop Live (AI Favorite Pick + First-call cache + description fix 70+ words)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -47,14 +47,14 @@ const STYLE_PRESETS = {
 
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
-/* ---------------- First-person description helper ---------------- */
+/* ---------------- First-person description helper (70+ words) ---------------- */
 function makeFirstPersonDescription(title, artist) {
   const options = [
-    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. The melody sticks in my head like glue, and I can feel the energy pulsing through every beat. It makes me want to get up, move, and share it with everyone I know, because it really feels like a soundtrack to this exact moment in time.`,
-    `When “${title}” comes on, I can’t help but stop scrolling and let it run. ${artist} really caught a wave with this one. There’s something addictive about the rhythm, the way it shifts between intensity and flow. It feels like a perfect mix of confidence and emotion, and I swear I could loop it all day and not get tired.`,
-    `I’ve had “${title}” by ${artist} stuck in my head all day, and it’s not leaving anytime soon. The vocals wrap around me like a conversation with a close friend, and the beat feels alive. Every time the chorus hits, I get goosebumps, like I’m standing in the middle of a crowd singing it back word for word.`,
-    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up. ${artist} nailed the energy here. The sound is sharp, bold, and fearless, but it also has this soft undercurrent that makes it so personal. I love that it feels both viral and intimate at the same time, like it’s written for the world but also just for me.`,
-    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring. It’s wild how a song can instantly change the atmosphere of a room, making it brighter and louder. This one feels like a moment — not just music, but a movement that I want to carry with me everywhere and keep on repeat.`
+    `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. The melody sticks in my head like glue, and I can feel the energy pulsing through every beat. The way the vocals flow on top of the rhythm makes the track feel like it was built for endless replays. It has this wild, unstoppable energy that makes me want to move, share it with friends, and relive the moment again and again until it becomes the anthem of my week.`,
+    `When “${title}” comes on, I can’t help but stop scrolling and let it run, because ${artist} really caught a wave with this one. There’s something addictive about the rhythm, the way it shifts between intensity and flow, keeping me locked in every second. It feels like the perfect mix of confidence and emotion, striking that balance between boldness and vulnerability. The more I listen, the more I realize it’s one of those tracks that feels personal, yet universal, and it sticks in my head like a soundtrack I didn’t know I needed.`,
+    `I’ve had “${title}” by ${artist} stuck in my head all day, and it’s not leaving anytime soon. The vocals wrap around me like a conversation with a close friend, pulling me deeper with every line, while the beat feels alive, almost breathing. Every time the chorus hits, I get goosebumps, like I’m standing in the middle of a crowd shouting it back word for word. It’s one of those rare tracks that takes over the room and changes the atmosphere completely, leaving me wanting to hit repeat no matter what I’m doing.`,
+    `Listening to “${title}” makes me feel like I’m in on the trend before it blows up, and that’s the exact magic ${artist} nailed here. The sound is sharp, bold, and fearless, but underneath it all there’s this softness that makes it feel deeply personal. It’s the kind of song that hits like a wave — powerful, quick, and unforgettable — but also lingers long after it ends. I can see it becoming a viral anthem, the kind of track that lives in everyone’s feed, yet still feels like it was made just for me.`,
+    `Every time I hear “${title}” by ${artist}, I get that rush that only a viral track can bring, where the energy instantly changes the entire space around me. The production is electric, the kind of sound that fills a room and makes it brighter, louder, and impossible to ignore. It feels less like just a song and more like a cultural moment, a movement that I want to carry with me everywhere I go. With each replay, the vibe only grows stronger, embedding itself deeper, and I can’t imagine my playlist without it now.`
   ];
   return options[Math.floor(Math.random() * options.length)];
 }
@@ -92,7 +92,7 @@ async function nextNewestPick() {
     return {
       title: pick.title || "Unknown",
       artist: pick.artist || "Unknown",
-      description: makeFirstPersonDescription(pick.title, pick.artist), // ✅ always "description"
+      description: makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: ["#NowPlaying", "#AIFavorite"]
     };
   } catch {
@@ -142,7 +142,7 @@ async function generateNextPick() {
     nextPickCache = {
       title: pick.title,
       artist: pick.artist,
-      description: pick.description,   // ✅ unified key
+      description: pick.description,
       hashtags: pick.hashtags,
       image: imageUrl,
       count: imageCount
@@ -158,7 +158,7 @@ app.get("/api/trend", async (_req, res) => {
     let result;
     if (nextPickCache) {
       result = nextPickCache;
-      nextPickCache = null; // consume cache, never reused
+      nextPickCache = null;
     } else {
       const pick = await nextNewestPick();
       const prompt = stylizedPrompt(pick.title, pick.artist);
@@ -167,7 +167,7 @@ app.get("/api/trend", async (_req, res) => {
       result = {
         title: pick.title,
         artist: pick.artist,
-        description: pick.description,   // ✅ unified key
+        description: pick.description,
         hashtags: pick.hashtags,
         image: imageUrl,
         count: imageCount
@@ -176,6 +176,51 @@ app.get("/api/trend", async (_req, res) => {
     res.json(result);
   } catch {
     res.json({ title: "Fresh Drop", artist: "323KbabeAI", description: "Text-only.", hashtags: ["#music","#trend"], image: null, count: imageCount });
+  }
+});
+
+/* ---------------- SSE stream ---------------- */
+app.get("/api/trend-stream", async (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
+
+  send("hello", { ok: true });
+
+  try {
+    const pick = await nextNewestPick();
+    const prompt = stylizedPrompt(pick.title, pick.artist);
+    send("trend", {
+      title: pick.title,
+      artist: pick.artist,
+      description: pick.description,   // ✅ unified with 70+ words
+      hashtags: pick.hashtags
+    });
+    send("status", { msg: "generating image…" });
+    const imageUrl = await generateImageUrl(prompt);
+    if (lastImgErr) send("diag", lastImgErr);
+
+    if (imageUrl) {
+      imageCount += 1;
+      send("count", { count: imageCount });
+      send("image", { src: imageUrl });
+      send("status", { msg: "done" });
+      send("end", { ok:true });
+    } else {
+      send("status", { msg: "image unavailable." });
+      send("end", { ok:false });
+    }
+  } catch (e) {
+    send("status", { msg: `error: ${e?.message || e}` });
+    send("end", { ok:false });
+  } finally {
+    clearInterval(hb);
+    res.end();
   }
 });
 
