@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + TTS + Pre-gen)
+// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + TTS + Frontend no scrollbars)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -24,7 +24,6 @@ const openai = new OpenAI({
 });
 
 /* ---------------- State ---------------- */
-let imageCount = 0;
 let lastImgErr = null;
 let nextPickCache = null;
 let generatingNext = false;
@@ -105,7 +104,7 @@ function makeFirstPersonDescription(title, artist) {
 }
 
 function pickSongAlgorithm() {
-  const weightTop = 0.7; // 70% from top 20
+  const weightTop = 0.7;
   const pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
   const idx = Math.floor(Math.pow(Math.random(), 1.5) * pool.length);
   return pool[idx];
@@ -124,11 +123,10 @@ function stylizedPrompt(title, artist, gender, styleKey = DEFAULT_STYLE) {
   ].join(" ");
 }
 
-/* ---------------- Voice Picker ---------------- */
 function chooseVoiceByGender(gender = "neutral") {
   if (gender === "female") return "shimmer";
   if (gender === "male") return "verse";
-  if (gender === "mixed") return "shimmer"; // groups = shimmer
+  if (gender === "mixed") return "shimmer";
   return "alloy";
 }
 
@@ -170,8 +168,7 @@ async function generateNextPick() {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
     const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
-    nextPickCache = { ...pick, image: imageUrl, count: imageCount };
+    nextPickCache = { ...pick, image: imageUrl };
   } finally {
     generatingNext = false;
   }
@@ -186,8 +183,7 @@ app.get("/api/trend", async (_req, res) => {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
     const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
-    result = { ...pick, image: imageUrl, count: imageCount };
+    result = { ...pick, image: imageUrl };
     generateNextPick();
   }
   res.json(result);
@@ -201,10 +197,10 @@ app.get("/api/trend-stream", async (req, res) => {
   try {
     let pick;
     if (nextPickCache) { pick = nextPickCache; nextPickCache = null; generateNextPick(); }
-    else { pick = await nextNewestPick(); const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender); pick.image = await generateImageUrl(prompt); if (pick.image) imageCount += 1; pick.count = imageCount; generateNextPick(); }
+    else { pick = await nextNewestPick(); const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender); pick.image = await generateImageUrl(prompt); generateNextPick(); }
 
     send("trend", pick);
-    if (pick.image) { send("count", { count: pick.count }); send("image", { src: pick.image }); send("status", { msg: "done" }); send("end", { ok:true }); }
+    if (pick.image) { send("image", { src: pick.image }); send("status", { msg: "done" }); send("end", { ok:true }); }
     else { send("status", { msg: "image unavailable." }); send("end", { ok:false }); }
   } catch (e) {
     send("status", { msg: `error: ${e.message}` }); send("end", { ok:false });
@@ -235,8 +231,40 @@ app.get("/api/voice", async (req, res) => {
 
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
+
+/* ---------------- Frontend with no scrollbars ---------------- */
+app.get("/", (_req, res) => {
+  res.send(`
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8"/>
+      <title>323drop Live</title>
+      <style>
+        body, html { margin:0; padding:0; overflow:hidden; background:#000; color:#fff; font-family:sans-serif; }
+        ::-webkit-scrollbar { display: none; }
+        * { scrollbar-width: none; }
+      </style>
+    </head>
+    <body>
+      <div id="app">
+        <h1>323drop is live…</h1>
+        <p>No scrollbars here 🚀</p>
+      </div>
+      <script>
+        document.addEventListener("DOMContentLoaded", () => {
+          document.body.style.overflow = "hidden";
+          document.documentElement.style.overflow = "hidden";
+          const style = document.createElement("style");
+          style.textContent = "::-webkit-scrollbar { display:none; } * { scrollbar-width:none; }";
+          document.head.appendChild(style);
+        });
+      </script>
+    </body>
+    </html>
+  `);
+});
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { console.log(`323drop live backend on :${PORT}`); generateNextPick(); });
+app.listen(PORT, () => { console.log(\`323drop live backend on :\${PORT}\`); generateNextPick(); });
