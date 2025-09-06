@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + OpenAI description + OpenAI images + Google TTS voice + Smart refresh)
+// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen pipeline + OpenAI description/images + Google TTS voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -45,9 +45,8 @@ async function googleTTS(text, style = "female") {
       return null;
     }
 
-    // ✅ Debug logs
     console.log("✅ Google TTS audio generated");
-    console.log("   Text:", text.slice(0, 60) + (text.length > 60 ? "..." : ""));
+    console.log("   Text:", text.slice(0, 60) + (text.length > 60 ? "...": ""));
     console.log("   Voice style:", style);
     console.log("   Audio length:", response.audioContent.length);
 
@@ -58,12 +57,17 @@ async function googleTTS(text, style = "female") {
   }
 }
 
-/* ---------------- Spotify Top 50 (Sept 2025, with gender) ---------------- */
+/* ---------------- State ---------------- */
+let nextPickCache = null;
+let generatingNext = false;
+let lastImgErr = null;
+
+/* ---------------- Spotify Top 50 ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
   { title: "Your Idol", artist: "Saja Boys", gender: "male" },
-  // ... include the rest of your 50 songs ...
+  // ... include all 50 songs ...
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -72,8 +76,8 @@ async function makeFirstPersonDescription(title, artist) {
   try {
     const prompt = `
       Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
-      Mimic the artist’s personality, mood, and style.
-      Make it natural, Gen-Z relatable, and as if the artist themselves is talking.
+      Mimic the artist’s personality, mood, and style (e.g., Billie Eilish = moody, Eminem = intense, Taylor Swift = storytelling).
+      Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
     `;
 
     const completion = await openai.chat.completions.create({
@@ -118,18 +122,17 @@ function stylizedPrompt(title, artist, gender) {
   ].join(" ");
 }
 
-/* ---------------- API: Full Pipeline ---------------- */
-app.get("/api/trend", async (req, res) => {
+/* ---------------- Pre-generation ---------------- */
+async function generateNextPick(style = "female") {
+  if (generatingNext) return;
+  generatingNext = true;
   try {
-    const style = req.query.style || "female";
-
-    // 1. Song
     const pick = pickSongAlgorithm();
 
-    // 2. Description
+    // Description
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    // 3. Image
+    // Image
     let imageUrl = null;
     try {
       const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
@@ -146,7 +149,7 @@ app.get("/api/trend", async (req, res) => {
       imageUrl = "https://placehold.co/600x600?text=No+Image";
     }
 
-    // 4. Voice
+    // Voice
     let voiceBase64 = null;
     try {
       const audioBuffer = await googleTTS(description, style);
@@ -155,8 +158,7 @@ app.get("/api/trend", async (req, res) => {
       console.error("❌ Voice gen failed:", e.message);
     }
 
-    // 5. Response with smart refresh
-    res.json({
+    nextPickCache = {
       title: pick.title,
       artist: pick.artist,
       gender: pick.gender,
@@ -164,17 +166,42 @@ app.get("/api/trend", async (req, res) => {
       hashtags: ["#NowPlaying", "#AIFavorite"],
       image: imageUrl,
       voice: voiceBase64,
-      refresh: voiceBase64 ? 3000 : null // ✅ only refresh if voice exists
-    });
+      refresh: voiceBase64 ? 3000 : null
+    };
+  } finally {
+    generatingNext = false;
+  }
+}
+
+/* ---------------- API Routes ---------------- */
+app.get("/api/trend", async (req, res) => {
+  try {
+    let result;
+    if (nextPickCache) {
+      // serve cached
+      result = nextPickCache;
+      nextPickCache = null;
+      generateNextPick(req.query.style || "female"); // start preparing next
+    } else {
+      // if no cache, generate now
+      await generateNextPick(req.query.style || "female");
+      result = nextPickCache;
+      nextPickCache = null;
+      generateNextPick(req.query.style || "female");
+    }
+    res.json(result);
   } catch (e) {
-    console.error("❌ Trend pipeline failed:", e);
-    res.status(500).json({ error: "Pipeline failed" });
+    console.error("❌ Trend API failed:", e);
+    res.status(500).json({ error: "Trend API failed" });
   }
 });
 
 /* ---------------- Health ---------------- */
-app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
+app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`323drop live backend on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`323drop live backend on :${PORT}`);
+  generateNextPick(); // kick off first pre-gen
+});
