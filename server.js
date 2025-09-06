@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + No repeats + Diverse desc + Young voice)
+// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -148,6 +148,37 @@ async function nextNewestPick() {
     }
 
     // Step 2: generate fresh diverse description
+    const angleOptions = [
+      "lyrics everyone is quoting",
+      "beat/production that makes people move",
+      "TikTok dance challenge",
+      "remixes and edits",
+      "meme use in short videos",
+      "emotional vibe of the chorus",
+      "crowd reaction at concerts",
+      "short-form loop appeal"
+    ];
+    const perspectiveOptions = [
+      "as someone posting their first TikTok with it",
+      "as a fan screaming it with friends",
+      "as someone who just heard it in a club",
+      "as a bedroom listener looping it all night",
+      "as a creator explaining why it hits differently",
+      "as a dancer learning the routine"
+    ];
+    const emotionOptions = [
+      "hype and confident",
+      "nostalgic and dreamy",
+      "flirty and playful",
+      "rebellious and bold",
+      "sad but hopeful",
+      "funny and ironic"
+    ];
+
+    const randomAngle = angleOptions[Math.floor(Math.random() * angleOptions.length)];
+    const randomPerspective = perspectiveOptions[Math.floor(Math.random() * perspectiveOptions.length)];
+    const randomEmotion = emotionOptions[Math.floor(Math.random() * emotionOptions.length)];
+
     let descOut = "";
     try {
       const desc = await openai.chat.completions.create({
@@ -157,8 +188,11 @@ async function nextNewestPick() {
           { role: "system", content: "Write like a Gen-Z fan describing why a viral song is blowing up." },
           { 
             role: "user", 
-            content: `Write a unique 60-80 word first-person description of "${pick.title}" by ${pick.artist}. 
-            Focus on a different aspect (lyrics, beat, dance challenge, remix, meme use, emotional vibe, or TikTok reactions).`
+            content: `Write a 60-80 word first-person description of "${pick.title}" by ${pick.artist}. 
+            Angle: ${randomAngle}. 
+            Perspective: ${randomPerspective}. 
+            Emotion: ${randomEmotion}. 
+            Keep it casual, Gen-Z tone, like a fan talking online.`
           }
         ]
       });
