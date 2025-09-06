@@ -171,7 +171,7 @@ async function generateImageUrl(prompt) {
   const models = ["gpt-image-1"];
   for (const model of models) {
     try {
-      const out = await openai.images.generate({ model, prompt, size: "512x512", response_format: "b64_json" });
+      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
       const d = out?.data?.[0];
       const b64 = d?.b64_json;
       const url = d?.url;
