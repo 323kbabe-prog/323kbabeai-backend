@@ -166,25 +166,27 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   ].join(" ");
 }
 
-/* ---------------- Image generation (super fast) ---------------- */
+/* ---------------- Image generation + fallbacks ---------------- */
 async function generateImageUrl(prompt) {
-  try {
-    const out = await openai.images.generate({
-      model: "gpt-image-1",     // fastest model
-      prompt,
-      size: "512x512",          // smaller = faster
-      response_format: "url"    // skip base64 overhead
-    });
-    return out.data[0]?.url || null;
-  } catch (e) {
-    lastImgErr = {
-      model: "gpt-image-1",
-      status: e?.status || e?.response?.status || null,
-      message: e?.response?.data?.error?.message || e?.message || String(e),
-    };
-    console.error("[images]", lastImgErr);
-    return null;
+  const models = ["gpt-image-1"];
+  for (const model of models) {
+	try {
+  	const out = await openai.images.generate({ model, prompt, size: "512x512", response_format: "b64_json" });
+  	const d = out?.data?.[0];
+  	const b64 = d?.b64_json;
+  	const url = d?.url;
+  	if (b64) return `data:image/png;base64,${b64}`;
+  	if (url)  return url;
+	} catch (e) {
+  	lastImgErr = {
+    	model,
+    	status: e?.status || e?.response?.status || null,
+    	message: e?.response?.data?.error?.message || e?.message || String(e),
+  	};
+  	console.error("[images]", lastImgErr);
+	}
   }
+  return null;
 }
 
 /* ---------------- Diagnostics ---------------- */
@@ -296,3 +298,4 @@ app.listen(PORT, () => {
   console.log(`323drop live backend on :${PORT}`);
   console.log("OpenAI key present:", !!process.env.OPENAI_API_KEY, "| Org set:", !!process.env.OPENAI_ORG_ID, "| Default style:", DEFAULT_STYLE);
 });
+
