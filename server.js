@@ -1,5 +1,4 @@
-// server-fast.js — minimal image generation test
-// Run: node server-fast.js
+// server-fast.js — minimal image generation test (fastest config)
 
 const express = require("express");
 const cors = require("cors");
@@ -9,7 +8,7 @@ const app = express();
 app.use(cors());
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // set in your Render env
+  apiKey: process.env.OPENAI_API_KEY, // must be set in Render env
 });
 
 let imageCount = 0;
@@ -18,9 +17,9 @@ let lastImgErr = null;
 async function generateImageUrl(prompt) {
   try {
     const out = await openai.images.generate({
-      model: "gpt-image-1",
+      model: "gpt-image-1",   // ✅ fastest model
       prompt,
-      size: "1024x1024"   // ✅ supported value
+      size: "1024x1024"       // ✅ smallest supported size
     });
     const d = out?.data?.[0];
     if (d?.url) return d.url;
@@ -31,6 +30,7 @@ async function generateImageUrl(prompt) {
   return null;
 }
 
+// Test endpoint
 app.get("/api/test-image", async (req, res) => {
   const prompt = req.query.prompt || "K-pop idol photocard, pastel haze, sparkles";
   const imageUrl = await generateImageUrl(prompt);
@@ -44,9 +44,7 @@ app.get("/api/test-image", async (req, res) => {
   });
 });
 
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
-
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Test server running at http://localhost:${PORT}`);
+  console.log(`🚀 Fast image server running at http://localhost:${PORT}`);
 });
