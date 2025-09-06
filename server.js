@@ -18,13 +18,12 @@ let lastImgErr = null;
 async function generateImageUrl(prompt) {
   try {
     const out = await openai.images.generate({
-      model: "gpt-image-1",   // fastest model
+      model: "gpt-image-1",
       prompt,
-      size: "512x512"         // smaller = faster
-      // no response_format (fixes 400 error)
+      size: "1024x1024"   // ✅ supported value
     });
     const d = out?.data?.[0];
-    if (d?.url) return d.url;   // use URL directly
+    if (d?.url) return d.url;
   } catch (e) {
     lastImgErr = { message: e?.message || String(e) };
     console.error("[images]", lastImgErr);
@@ -32,7 +31,6 @@ async function generateImageUrl(prompt) {
   return null;
 }
 
-// One endpoint: return image
 app.get("/api/test-image", async (req, res) => {
   const prompt = req.query.prompt || "K-pop idol photocard, pastel haze, sparkles";
   const imageUrl = await generateImageUrl(prompt);
@@ -46,7 +44,6 @@ app.get("/api/test-image", async (req, res) => {
   });
 });
 
-// Diagnostics
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 
 const PORT = process.env.PORT || 5000;
