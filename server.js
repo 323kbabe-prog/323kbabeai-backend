@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + Google TTS default + OpenAI optional)
+// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + Google TTS sweet male/female + OpenAI fallback)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -25,25 +25,29 @@ const openai = new OpenAI({
 
 /* ---------------- Google TTS ---------------- */
 const googleTTSClient = new textToSpeech.TextToSpeechClient();
-async function googleTTS(text) {
+
+async function googleTTS(text, style = "female") {
+  // Map styles to Google Neural voices
+  const voiceMap = {
+    female: { languageCode: "en-US", name: "en-US-Neural2-F", ssmlGender: "FEMALE" },
+    male:   { languageCode: "en-US", name: "en-US-Neural2-D", ssmlGender: "MALE" }
+  };
+
+  const voice = voiceMap[style] || voiceMap.female; // default = sweet female
+
   const [response] = await googleTTSClient.synthesizeSpeech({
     input: { text },
-    voice: {
-      languageCode: "en-US",
-      name: "en-US-Neural2-F", // sweet female neural voice
-      ssmlGender: "FEMALE"
-    },
+    voice,
     audioConfig: {
       audioEncoding: "MP3",
       speakingRate: 1.0,
-      pitch: 2.0
+      pitch: style === "female" ? 2.0 : 1.5 // higher pitch for female, softer male tone
     }
   });
   return response.audioContent;
 }
 
 /* ---------------- State ---------------- */
-let lastImgErr = null;
 let nextPickCache = null;
 let generatingNext = false;
 
@@ -158,13 +162,15 @@ app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
     const source = req.query.source || "google"; // default = google
+    const style = req.query.style || "female";   // sweet female | sweet male
     const gender = req.query.gender || "neutral";
+
     if (!text) return res.status(400).json({ error: "Missing text" });
 
     let audioBuffer;
 
     if (source === "openai") {
-      // use OpenAI only if requested
+      // fallback to OpenAI voices
       const out = await openai.audio.speech.create({
         model: "gpt-4o-mini-tts",
         voice: chooseVoiceByGender(gender),
@@ -172,8 +178,8 @@ app.get("/api/voice", async (req, res) => {
       });
       audioBuffer = Buffer.from(await out.arrayBuffer());
     } else {
-      // default: Google TTS
-      audioBuffer = await googleTTS(text);
+      // Google TTS with style
+      audioBuffer = await googleTTS(text, style);
     }
 
     res.setHeader("Content-Type", "audio/mpeg");
