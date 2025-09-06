@@ -1,14 +1,7 @@
-// server.js — multi-source persona song picker with locked image style
+// songPicker.js — multi-source song picking algorithm with persona bias
 // Node >= 20, CommonJS
 
-const express = require("express");
-const cors = require("cors");
 const OpenAI = require("openai");
-
-const app = express();
-
-/* ---------------- CORS ---------------- */
-app.use(cors({ origin: "*", methods: ["GET"] }));
 
 /* ---------------- OpenAI ---------------- */
 const openai = new OpenAI({
@@ -106,87 +99,22 @@ ${listText}`
   try {
     pick = JSON.parse(completion.choices[0].message.content);
   } catch {
+    // fallback: random song
     pick = songs[Math.floor(Math.random() * songs.length)];
   }
   return pick;
 }
 
-/* ---------------- GPT Description ---------------- */
-async function makePersonaDescription(persona, title, artist) {
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [
-      { role: "system", content: "you are a gen-z music stan account." },
-      {
-        role: "user",
-        content: `As ${persona}, write a minimum 70-word stan-style rant with lots of emojis about the song “${title}” by ${artist}.`
-      }
-    ]
-  });
-  return completion.choices[0].message.content || "";
+/* ---------------- Main exported function ---------------- */
+async function getSongPick() {
+  const persona = randomPersona();
+  const songs = await fetchAllSongs();
+  const pick = await pickSongWithPersona(persona, songs);
+  return {
+    title: pick.title,
+    artist: pick.artist,
+    persona
+  };
 }
 
-/* ---------------- Image Generation (locked style: stan-photocard) ---------------- */
-async function generateImage(title, artist) {
-  const prompt = [
-    `create a high-impact cover image for the song "${title}" by ${artist}.`,
-    "audience: gen-z fan culture (fans). visual goal: stan-photocard idol photocard vibe.",
-    "make an original pop-idol-adjacent face and styling; do not replicate any real person or celebrity.",
-    "absolutely no text, letters, numbers, logos, or watermarks.",
-    "square 1:1 composition, glossy k-pop look, pastel gradient background, subtle film grain."
-  ].join(" ");
-
-  try {
-    const out = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt,
-      size: "1024x1024",
-      response_format: "b64_json"
-    });
-    const d = out?.data?.[0];
-    if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
-    if (d?.url) return d.url;
-  } catch (e) {
-    console.error("[image error]", e.message);
-  }
-  return null;
-}
-
-/* ---------------- API Endpoint ---------------- */
-app.get("/api/trend", async (_req, res) => {
-  try {
-    const persona = randomPersona();
-    const songs = await fetchAllSongs();
-    const pick = await pickSongWithPersona(persona, songs);
-    const description = await makePersonaDescription(persona, pick.title, pick.artist);
-    const image = await generateImage(pick.title, pick.artist);
-
-    res.json({
-      title: pick.title,
-      artist: pick.artist,
-      persona,
-      description,
-      hashtags: ["#nowplaying", "#fyp", "#stanvibes"],
-      image
-    });
-  } catch (e) {
-    console.error("trend error", e);
-    res.json({
-      title: "fallback song",
-      artist: "ai dj",
-      persona: "neutral ai persona",
-      description: "this is a fallback track when things break.",
-      hashtags: ["#ai"],
-      image: null
-    });
-  }
-});
-
-/* ---------------- Health ---------------- */
-app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
-
-/* ---------------- Start ---------------- */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`multi-source persona song picker live on :${PORT}`);
-});
+module.exports = { getSongPick };
