@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + Google TTS + Pre-gen)
+// server.js — 323drop Live (Spotify Top 50 USA + OpenAI description + OpenAI images + Google TTS voice + Pre-gen)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -17,7 +17,7 @@ app.use(cors({
   maxAge: 86400,
 }));
 
-/* ---------------- OpenAI (for images) ---------------- */
+/* ---------------- OpenAI (for text + images) ---------------- */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
@@ -60,58 +60,106 @@ const TOP50_USA = [
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
   { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
   { title: "Soda Pop", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  // ... rest unchanged ...
+  { title: "How It’s Done", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
+  { title: "back to friends", artist: "sombr", gender: "male" },
+  { title: "DAISIES", artist: "Justin Bieber", gender: "male" },
+  { title: "Ordinary", artist: "Alex Warren", gender: "male" },
+  { title: "What It Sounds Like", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
+  { title: "Takedown", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
+  { title: "Love Me Not", artist: "Ravyn Lenae", gender: "female" },
+  { title: "Free", artist: "Rumi, Jinu, EJAE, Andrew Choi, KPop Demon Hunters Cast", gender: "mixed" },
+  { title: "Dreams (2004 Remaster)", artist: "Fleetwood Mac", gender: "mixed" },
+  { title: "What I Want (feat. Tate McRae)", artist: "Morgan Wallen, Tate McRae", gender: "mixed" },
+  { title: "undressed", artist: "sombr", gender: "male" },
+  { title: "Manchild", artist: "Sabrina Carpenter", gender: "female" },
+  { title: "I Got Better", artist: "Morgan Wallen", gender: "male" },
+  { title: "Just In Case", artist: "Morgan Wallen", gender: "male" },
+  { title: "No One Noticed", artist: "The Marías", gender: "female" },
+  { title: "BIRDS OF A FEATHER", artist: "Billie Eilish", gender: "female" },
+  { title: "Last Time I Saw You", artist: "Nicki Minaj", gender: "female" },
+  { title: "Need You Now", artist: "Lady Antebellum", gender: "mixed" },
+  { title: "One of the Girls", artist: "The Weeknd, JENNIE, Lily-Rose Depp", gender: "mixed" },
+  { title: "Paint The Town Red", artist: "Doja Cat", gender: "female" },
+  { title: "Lose Yourself", artist: "Eminem", gender: "male" },
+  { title: "Die With A Smile", artist: "Lady Gaga & Bruno Mars", gender: "mixed" },
+  { title: "Luther", artist: "Kendrick Lamar & SZA", gender: "mixed" },
+  { title: "Ordinary (Acoustic)", artist: "Alex Warren", gender: "male" },
+  { title: "TEXAS HOLD 'EM", artist: "Beyoncé", gender: "female" },
+  { title: "Houdini", artist: "Dua Lipa", gender: "female" },
+  { title: "Espresso", artist: "Sabrina Carpenter", gender: "female" },
+  { title: "Snow On The Beach", artist: "Taylor Swift, Lana Del Rey", gender: "female" },
+  { title: "Gently", artist: "Drake feat. Bad Bunny", gender: "male" },
+  { title: "Cruel Summer", artist: "Taylor Swift", gender: "female" },
+  { title: "I Like The Way You Kiss Me", artist: "Artemas", gender: "male" },
+  { title: "Seven (feat. Latto)", artist: "Jung Kook, Latto", gender: "male" },
+  { title: "IDGAF", artist: "Drake", gender: "male" },
+  { title: "Too Sweet", artist: "Hozier", gender: "male" },
+  { title: "Slime You Out", artist: "Drake feat. SZA", gender: "mixed" },
+  { title: "Barbie World", artist: "Nicki Minaj, Ice Spice, Aqua", gender: "female" },
+  { title: "Peaches", artist: "Justin Bieber feat. Daniel Caesar & Giveon", gender: "male" },
+  { title: "Up", artist: "Cardi B", gender: "female" },
+  { title: "MONTERO (Call Me By Your Name)", artist: "Lil Nas X", gender: "male" },
+  { title: "drivers license", artist: "Olivia Rodrigo", gender: "female" },
+  { title: "Shivers", artist: "Ed Sheeran", gender: "male" },
+  { title: "Blinding Lights", artist: "The Weeknd", gender: "male" },
+  { title: "As It Was", artist: "Harry Styles", gender: "male" },
+  { title: "Flowers", artist: "Miley Cyrus", gender: "female" },
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
-/* ---------------- Style Presets ---------------- */
-const STYLE_PRESETS = {
-  "stan-photocard": {
-    description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
-    tags: [
-      "square 1:1 cover, subject centered, shoulders-up or half-body",
-      "flash-lit glossy skin with subtle K-beauty glow",
-      "pastel gradient background (milk pink, baby blue, lilac) with haze",
-      "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
-      "tiny glitter bokeh and lens glints",
-      "clean studio sweep look; light falloff; subtle film grain",
-      "original influencer look — not a specific or real celebrity face"
-    ]
-  }
-};
-const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
-
 /* ---------------- Helpers ---------------- */
-function makeFirstPersonDescription(title, artist) {
-  return `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. The melody sticks in my head like glue, the vocals feel alive, and every replay makes it more addictive. It’s one of those tracks that changes the whole mood of the room.`;
+async function makeFirstPersonDescription(title, artist) {
+  try {
+    const prompt = `
+      Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
+      Mimic the artist’s personality, mood, and style (e.g., Billie Eilish = moody, Eminem = intense, Taylor Swift = storytelling).
+      Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking about their own song.
+    `;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.9,
+      messages: [
+        { role: "system", content: "You are a music fan channeling the artist’s voice in first person." },
+        { role: "user", content: prompt }
+      ]
+    });
+
+    return completion.choices[0].message.content.trim();
+  } catch (e) {
+    console.error("❌ OpenAI description generation failed:", e.message);
+    return `I just played “${title}” by ${artist}, and the vibe stuck with me instantly — unforgettable and addictive.`;
+  }
 }
+
 function pickSongAlgorithm() {
   const weightTop = 0.7;
-  const pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
-  const idx = Math.floor(Math.pow(Math.random(), 1.5) * pool.length);
+  let pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
+  if (!pool.length) pool = TOP50_USA;
+  const idx = Math.floor(Math.random() * pool.length);
   return pool[idx];
 }
-function stylizedPrompt(title, artist, gender, styleKey = DEFAULT_STYLE) {
-  const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
+
+function stylizedPrompt(title, artist, gender) {
   return [
     `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
-    `Audience: Gen-Z fan culture. Visual goal: ${s.description}.`,
+    `Audience: Gen-Z fan culture. Visual goal: lockscreen-ready idol photocard vibe.`,
     "Make an ORIGINAL idol-like face and styling; do NOT replicate real celebrities.",
     "No text, logos, or watermarks.",
     "Square 1:1 composition.",
-    `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`,
-    ...s.tags.map(t => `• ${t}`)
+    `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`
   ].join(" ");
 }
 
 /* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   const pick = pickSongAlgorithm();
+  const description = await makeFirstPersonDescription(pick.title, pick.artist);
   return {
     title: pick.title,
     artist: pick.artist,
     gender: pick.gender,
-    description: makeFirstPersonDescription(pick.title, pick.artist),
+    description,
     hashtags: ["#NowPlaying", "#AIFavorite"]
   };
 }
@@ -163,26 +211,6 @@ app.get("/api/trend", async (_req, res) => {
   res.json(result);
 });
 
-app.get("/api/trend-stream", async (req, res) => {
-  res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
-  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
-  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
-
-  try {
-    let pick;
-    if (nextPickCache) { pick = nextPickCache; nextPickCache = null; generateNextPick(); }
-    else { pick = await nextNewestPick(); const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender); pick.image = await generateImageUrl(prompt); if (pick.image) imageCount += 1; pick.count = imageCount; generateNextPick(); }
-
-    send("trend", pick);
-    if (pick.image) { send("count", { count: pick.count }); send("image", { src: pick.image }); send("status", { msg: "done" }); send("end", { ok:true }); }
-    else { send("status", { msg: "image unavailable." }); send("end", { ok:false }); }
-  } catch (e) {
-    send("status", { msg: `error: ${e.message}` }); send("end", { ok:false });
-  } finally {
-    clearInterval(hb); res.end();
-  }
-});
-
 /* ---------------- Voice (Google TTS only) ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
@@ -207,4 +235,7 @@ app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { console.log(`323drop live backend on :${PORT}`); generateNextPick(); });
+app.listen(PORT, () => { 
+  console.log(`323drop live backend on :${PORT}`); 
+  generateNextPick(); 
+});
