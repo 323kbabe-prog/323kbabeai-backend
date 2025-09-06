@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + Google TTS sweet male/female + OpenAI fallback)
+// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + Google TTS default + OpenAI optional)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -41,7 +41,7 @@ async function googleTTS(text, style = "female") {
     audioConfig: {
       audioEncoding: "MP3",
       speakingRate: 1.0,
-      pitch: style === "female" ? 2.0 : 1.5 // higher pitch for female, softer male tone
+      pitch: style === "female" ? 2.0 : 1.5
     }
   });
   return response.audioContent;
