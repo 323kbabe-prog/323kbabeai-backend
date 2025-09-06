@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fast Mode)
+// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + First-person description 50+ words + Safe prompt sanitization)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -27,10 +27,10 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 
-/* ---------------- Gen-Z fans style system ---------------- */
+/* ---------------- Gen‑Z fans style system ---------------- */
 const STYLE_PRESETS = {
   "stan-photocard": {
-    description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
+    description: "lockscreen-ready idol photocard vibe for Gen‑Z fan culture",
     tags: [
       "square 1:1 cover, subject centered, shoulders-up or half-body",
       "flash-lit glossy skin with subtle K-beauty glow",
@@ -98,6 +98,8 @@ function makeFirstPersonDescription(title, artist) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
+/* ---------------- Sanitize titles/artists for image prompt ---------------- */
+
 /* ---------------- Gender & Voice helpers ---------------- */
 function genderFromArtist(artist = "") {
   const lower = artist.toLowerCase();
@@ -111,6 +113,7 @@ function chooseVoice(artist = "") {
   if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  // young male
   return "alloy"; // fallback neutral
 }
+
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
@@ -130,7 +133,8 @@ async function nextNewestPick() {
     let pick;
     try {
       pick = JSON.parse(text);
-    } catch {
+    } catch (err) {
+      console.error("JSON parse error:", err.message, "Raw text:", text);
       pick = { title: "Unknown", artist: "Unknown" };
     }
 
@@ -140,12 +144,13 @@ async function nextNewestPick() {
       desc: makeFirstPersonDescription(pick.title, pick.artist),
       hashtags: ["#NowPlaying", "#AIFavorite"]
     };
-  } catch {
+  } catch (e) {
+    console.error("Favorite pick failed:", e.message);
     return { title: "Fallback Song", artist: "AI DJ", desc: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
   }
 }
 
-/* ---------------- Prompt builder ---------------- */
+/* ---------------- Prompt builder (always Korean idol style + sanitized input) ---------------- */
 function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [], inspoTags = []) {
   const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
@@ -161,22 +166,27 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   ].join(" ");
 }
 
-/* ---------------- FAST Image generation ---------------- */
+/* ---------------- Image generation + fallbacks ---------------- */
 async function generateImageUrl(prompt) {
-  try {
-    const out = await openai.images.generate({
-      model: "gpt-image-1",       // fastest
-      prompt,
-      size: "512x512",            // smaller & quicker
-      response_format: "url"      // lighter than base64
-    });
-    const d = out?.data?.[0];
-    return d?.url || null;
-  } catch (e) {
-    lastImgErr = { model: "gpt-image-1", message: e.message };
-    console.error("[images]", lastImgErr);
-    return null;
+  const models = ["gpt-image-1", "dall-e-3"];
+  for (const model of models) {
+    try {
+      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
+      const d = out?.data?.[0];
+      const b64 = d?.b64_json;
+      const url = d?.url;
+      if (b64) return `data:image/png;base64,${b64}`;
+      if (url)  return url;
+    } catch (e) {
+      lastImgErr = {
+        model,
+        status: e?.status || e?.response?.status || null,
+        message: e?.response?.data?.error?.message || e?.message || String(e),
+      };
+      console.error("[images]", lastImgErr);
+    }
   }
+  return null;
 }
 
 /* ---------------- Diagnostics ---------------- */
@@ -247,7 +257,7 @@ app.get("/api/trend", async (_req, res) => {
       image: imageUrl,
       count: imageCount
     });
-  } catch {
+  } catch (e) {
     res.json({
       title: "Fresh Drop",
       artist: "323KbabeAI",
@@ -259,6 +269,7 @@ app.get("/api/trend", async (_req, res) => {
   }
 });
 
+
 /* ---------------- Voice (TTS) ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
@@ -267,7 +278,7 @@ app.get("/api/voice", async (req, res) => {
 
     const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: chooseVoice(req.query.artist || ""),
+      voice: chooseVoice(req.query.artist || ""), // can be changed to "verse", "sage", etc.
       input: text,
     });
 
@@ -279,6 +290,7 @@ app.get("/api/voice", async (req, res) => {
     res.status(500).json({ error: "TTS failed" });
   }
 });
+
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
