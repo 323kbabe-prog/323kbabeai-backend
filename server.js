@@ -63,7 +63,7 @@ const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
   { title: "Your Idol", artist: "Saja Boys", gender: "male" },
-  // ... include rest of the 50 here ...
+  // ... include the rest of your 50 songs ...
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -72,8 +72,8 @@ async function makeFirstPersonDescription(title, artist) {
   try {
     const prompt = `
       Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
-      Mimic the artist’s personality, mood, and style.
-      Make it natural, Gen-Z relatable, and as if the artist themselves is talking.
+      Mimic the artist’s personality, mood, and style (e.g., Billie Eilish = moody, Eminem = intense, Taylor Swift = storytelling).
+      Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
     `;
 
     const completion = await openai.chat.completions.create({
@@ -129,15 +129,14 @@ app.get("/api/trend", async (req, res) => {
     // 2. Description
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    // 3. Image
+    // 3. Image (fixed: no response_format)
     let imageUrl = null;
     try {
       const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
       const out = await openai.images.generate({
         model: "gpt-image-1",
         prompt,
-        size: "1024x1024",
-        response_format: "b64_json"
+        size: "1024x1024"
       });
       const d = out?.data?.[0];
       if (d?.b64_json) imageUrl = `data:image/png;base64,${d.b64_json}`;
