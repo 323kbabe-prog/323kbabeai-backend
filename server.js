@@ -1,127 +1,148 @@
-// app.js — two-page flow: Page1 start screen, Page2 content
-(() => {
-  const $ = (id) => document.getElementById(id);
+// server.js — backend for 323drop
+// Node.js v20+, CommonJS
 
-  const page1   = $("page1");
-  const page2   = $("page2");
-  const elDot   = $("health-dot");
-  const elStatus= $("status");
-  const elTitle = $("r-title");
-  const elArtist= $("r-artist");
-  const elDesc  = $("r-desc");
-  const elTags  = $("r-tags");
-  const elImg   = $("r-img");
-  const elStart = $("start");
-  const voiceEl = $("voice");
-  const elHead  = $("headline");
-  const logbox  = $("logbox");
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const OpenAI = require("openai");
 
-  let started   = false;
-  let autoCycle = true;
-  let loading   = false;
-  let countdownTimer = null;
+const app = express();
 
-  /* Mini log */
-  function ts(){ return new Date().toLocaleTimeString([], {hour12:false}); }
-  function log(text){
-    const lines = logbox.textContent ? logbox.textContent.split("\n") : [];
-    lines.push(`[${ts()}] ${text}`);
-    while(lines.length > 120) lines.shift();
-    logbox.textContent = lines.join("\n");
-    logbox.scrollTop = logbox.scrollHeight;
-    elHead.textContent = `Log: ${text}`;
+/* ---------------- CORS ---------------- */
+const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
+app.use(cors({
+  origin: (origin, cb) => (!origin || ALLOW.includes(origin))
+    ? cb(null, true)
+    : cb(new Error("CORS: origin not allowed")),
+  methods: ["GET", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+  maxAge: 86400,
+}));
+
+/* ---------------- OpenAI ---------------- */
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
+});
+
+/* ---------------- State ---------------- */
+let imageCount = 0;
+let lastImgErr = null;
+
+/* ---------------- Helpers ---------------- */
+async function nextNewestPick() {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "You are a music trend parser." },
+        {
+          role: "user",
+          content: `Pick ONE current trending song (Spotify or TikTok).
+          Return JSON: {"title":"...","artist":"...","description":"...","hashtags":["#tag1","#tag2"]}.
+          - description must be first-person, 50+ words, Gen-Z style.
+          - hashtags: 2–4 trending tags.`
+        }
+      ]
+    });
+
+    return JSON.parse(completion.choices[0].message.content);
+  } catch (e) {
+    console.error("pick error:", e.message);
+    return {
+      title: "Fallback Song",
+      artist: "AI DJ",
+      description: "Fallback track still slaps.",
+      hashtags: ["#AI"]
+    };
   }
+}
 
-  /* Helpers */
-  const setStatus = (msg) => { elStatus.textContent = msg; };
-  const setDot = (ok) => { elDot.classList.toggle("ok", !!ok); elDot.classList.toggle("err", !ok); };
-
-  async function health(){
-    try {
-      const r = await fetch("/health",{cache:"no-store"});
-      setDot(r.ok); log(r.ok ? "health ✓" : "health ✗");
-    } catch { setDot(false); log("health ✗ (network)"); }
+async function generateImageUrl(prompt) {
+  try {
+    const out = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024",
+      response_format: "b64_json"
+    });
+    const d = out?.data?.[0];
+    if (d?.b64_json) {
+      return `data:image/png;base64,${d.b64_json}`;
+    }
+    return d?.url || null;
+  } catch (e) {
+    lastImgErr = { message: e.message };
+    console.error("image error:", e.message);
+    return null;
   }
+}
 
-  function speak(description, artist){
-    const q = new URLSearchParams({ text: description || "", artist: artist || "" });
-    voiceEl.src = `/api/voice?${q.toString()}`;
-    voiceEl.play().catch(err=>{
-      log(`tts play failed: ${err?.message||err}`);
-      setStatus("❌ Voice play failed — tap Start.");
+/* ---------------- API Routes ---------------- */
+app.get("/health", (_req, res) =>
+  res.json({ ok: true, time: Date.now() })
+);
+
+app.get("/diag/images", (_req, res) =>
+  res.json({ lastImgErr })
+);
+
+app.get("/api/stats", (_req, res) =>
+  res.json({ count: imageCount })
+);
+
+app.get("/api/trend", async (_req, res) => {
+  try {
+    const pick = await nextNewestPick();
+    const prompt = `Cover image for "${pick.title}" by ${pick.artist}, Gen-Z idol style.`;
+    const imageUrl = await generateImageUrl(prompt);
+
+    if (imageUrl) imageCount++;
+
+    res.json({
+      ...pick,
+      image: imageUrl,
+      count: imageCount
+    });
+  } catch (e) {
+    res.json({
+      title: "Error",
+      artist: "AI",
+      description: "No data available.",
+      hashtags: ["#error"],
+      image: null,
+      count: imageCount
     });
   }
+});
 
-  async function fetchTrendOnce(){
-    if(loading) return;
-    loading = true;
-    clearInterval(countdownTimer);
-    setStatus("📡 Fetching trend…");
-    log("fetch: /api/trend");
-    try {
-      const r = await fetch("/api/trend",{cache:"no-store"});
-      if(!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      log("fetch ✓");
+app.get("/api/voice", async (req, res) => {
+  try {
+    const text = String(req.query.text || "").slice(0, 2000);
+    if (!text) return res.status(400).json({ error: "Missing text" });
 
-      // Fill text
-      elTitle.textContent  = data.title || "—";
-      elArtist.textContent = data.artist || "—";
-      elDesc.textContent   = data.description || "—";
-      elTags.innerHTML     = "";
-      (data.hashtags||[]).forEach(tag=>{
-        const span=document.createElement("span");
-        span.className="tag"; span.textContent=tag;
-        elTags.appendChild(span);
-      });
+    const out = await openai.audio.speech.create({
+      model: "gpt-4o-mini-tts",
+      voice: "alloy",
+      input: text,
+      format: "mp3"
+    });
 
-      // Wait for image, then voice
-      elImg.onload=()=>{
-        log("image loaded ✓");
-        setStatus("🖼️ + 🎵 Drop ready");
-        if(started) speak(data.description,data.artist);
-      };
-      elImg.onerror=()=>{
-        log("image error ✗");
-        setStatus("⚠️ Image failed, but voice starts");
-        if(started) speak(data.description,data.artist);
-      };
-      elImg.src=data.image||"";
-    }catch(e){
-      setStatus("❌ Error fetching trend.");
-      log(`fetch ✗ ${e?.message||e}`);
-    }finally{ loading=false; }
+    const buffer = Buffer.from(await out.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(buffer);
+  } catch (e) {
+    console.error("voice error:", e.message);
+    res.status(500).json({ error: "TTS failed" });
   }
+});
 
-  /* Page switch: Start button */
-  elStart.addEventListener("click",async()=>{
-    started=true;
-    page1.style.display="none";
-    page2.style.display="block";
-    log("start: voice unlocked");
-    await fetchTrendOnce();
-  });
+/* ---------------- Static Files ---------------- */
+app.use(express.static(path.join(__dirname, "public")));
 
-  /* Auto cycle */
-  voiceEl.addEventListener("ended",()=>{
-    log("tts: ended");
-    if(!autoCycle) return;
-    let secs=3;
-    setStatus(`⏳ Next in ${secs}s…`);
-    countdownTimer=setInterval(()=>{
-      secs--;
-      setStatus(`⏳ Next in ${secs}s…`);
-      if(secs<=0){
-        clearInterval(countdownTimer);
-        if(started) fetchTrendOnce();
-      }
-    },1000);
-  });
-
-  voiceEl.addEventListener("play",()=>{ setStatus("🔊 Playing…"); log("tts: play"); });
-  voiceEl.addEventListener("error",()=>{ setStatus("❌ Voice error."); log("tts: error"); });
-
-  // initial
-  page1.style.display="flex";
-  health(); setInterval(health,30000);
-})();
+/* ---------------- Start ---------------- */
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`323drop backend on :${PORT}`);
+});
