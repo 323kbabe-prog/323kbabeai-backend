@@ -1,39 +1,38 @@
-// app.js — 323drop Live (all-at-once reveal logic)
+// app.js — two-page flow: Page1 start screen, Page2 content
 (() => {
   const $ = (id) => document.getElementById(id);
 
-  const elDot    = $("health-dot");
-  const elStatus = $("status");
-  const elTitle  = $("r-title");
-  const elArtist = $("r-artist");
-  const elDesc   = $("r-desc");
-  const elTags   = $("r-tags");
-  const elImg    = $("r-img");
-  const elStart  = $("start");
-  const voiceEl  = $("voice");
-  const elHead   = $("headline");
-  const logbox   = $("logbox");
-  const elContent= $("content");
+  const page1   = $("page1");
+  const page2   = $("page2");
+  const elDot   = $("health-dot");
+  const elStatus= $("status");
+  const elTitle = $("r-title");
+  const elArtist= $("r-artist");
+  const elDesc  = $("r-desc");
+  const elTags  = $("r-tags");
+  const elImg   = $("r-img");
+  const elStart = $("start");
+  const voiceEl = $("voice");
+  const elHead  = $("headline");
+  const logbox  = $("logbox");
 
   let started   = false;
   let autoCycle = true;
   let loading   = false;
-  let lastArtist= "";
   let countdownTimer = null;
 
-  /* ---------- Mini log helpers ---------- */
-  const MAX_LOG = 120;
+  /* Mini log */
   function ts(){ return new Date().toLocaleTimeString([], {hour12:false}); }
   function log(text){
     const lines = logbox.textContent ? logbox.textContent.split("\n") : [];
     lines.push(`[${ts()}] ${text}`);
-    while (lines.length > MAX_LOG) lines.shift();
+    while(lines.length > 120) lines.shift();
     logbox.textContent = lines.join("\n");
     logbox.scrollTop = logbox.scrollHeight;
     elHead.textContent = `Log: ${text}`;
   }
 
-  /* ---------- UI helpers ---------- */
+  /* Helpers */
   const setStatus = (msg) => { elStatus.textContent = msg; };
   const setDot = (ok) => { elDot.classList.toggle("ok", !!ok); elDot.classList.toggle("err", !ok); };
 
@@ -75,18 +74,15 @@
         span.className="tag"; span.textContent=tag;
         elTags.appendChild(span);
       });
-      lastArtist=data.artist||"";
 
-      // Wait until image is ready, then reveal + voice
+      // Wait for image, then voice
       elImg.onload=()=>{
         log("image loaded ✓");
-        elContent.classList.add("ready");
         setStatus("🖼️ + 🎵 Drop ready");
         if(started) speak(data.description,data.artist);
       };
       elImg.onerror=()=>{
         log("image error ✗");
-        elContent.classList.add("ready");
         setStatus("⚠️ Image failed, but voice starts");
         if(started) speak(data.description,data.artist);
       };
@@ -97,15 +93,16 @@
     }finally{ loading=false; }
   }
 
-  /* ---------- Controls ---------- */
+  /* Page switch: Start button */
   elStart.addEventListener("click",async()=>{
     started=true;
-    elStart.disabled=true;
+    page1.style.display="none";
+    page2.style.display="block";
     log("start: voice unlocked");
     await fetchTrendOnce();
   });
 
-  /* ---------- Audio events ---------- */
+  /* Auto cycle */
   voiceEl.addEventListener("ended",()=>{
     log("tts: ended");
     if(!autoCycle) return;
@@ -125,5 +122,6 @@
   voiceEl.addEventListener("error",()=>{ setStatus("❌ Voice error."); log("tts: error"); });
 
   // initial
+  page1.style.display="flex";
   health(); setInterval(health,30000);
 })();
