@@ -1,4 +1,4 @@
-// server.js — 323drop live backend (continuous pre-gen + 70+ word descriptions + locked image style)
+// server.js — 323drop live backend (locked image style: stan-photocard)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -34,6 +34,66 @@ let imageCount = 0;
 let lastImgErr = null;
 let nextPickCache = null;
 let generatingNext = false;
+
+/* ---------------- Style Presets (from reference) ---------------- */
+const STYLE_PRESETS = {
+  "stan-photocard": {
+    description: "lockscreen-ready idol photocard vibe for gen-z fan culture",
+    tags: [
+      "square 1:1 cover, subject centered, shoulders-up or half-body",
+      "flash-lit glossy skin with subtle k-beauty glow",
+      "pastel gradient background (milk pink, baby blue, lilac) with haze",
+      "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
+      "tiny glitter bokeh and lens glints",
+      "clean studio sweep look; light falloff; subtle film grain",
+      "original influencer look — not a specific or real celebrity face"
+    ]
+  },
+  "poster-wall": {
+    description: "DIY bedroom poster wall — shareable fan collage energy",
+    tags: [
+      "layered paper textures with tape corners and torn edges",
+      "implied magazine clippings WITHOUT readable text or logos",
+      "pastel + neon accents, soft shadowed layers",
+      "subject in front with crisp rim light; background defocused collage",
+      "sparkle confetti and star cutouts; tasteful grain",
+      "original, non-celeb face with pop-idol charisma"
+    ]
+  },
+  "glow-stage-fan": {
+    description: "arena lightstick glow — concert-night fan moment",
+    tags: [
+      "dark stage background with colorful beam lights and haze",
+      "bokeh crowd dots; generic lightstick silhouettes (no branding)",
+      "hot rim light on hair and shoulders; motion vibe",
+      "bold neon accents (electric cyan, hot pink, laser purple)",
+      "no text, no numbers, no logos; original performer vibe"
+    ]
+  },
+  "y2k-stickerbomb": {
+    description: "Y2K candycore — playful stickerbomb pop aesthetic",
+    tags: [
+      "candy tones (cotton-candy pink, lime soda, sky cyan); glossy highlights",
+      "airbrush hearts and starbursts as shapes only",
+      "phone-camera flash look with mild bloom",
+      "floating sticker motifs around subject; keep face clean",
+      "no typography; original pop-idol energy"
+    ]
+  },
+  "street-fandom": {
+    description: "urban fan-cam energy — trendy city-night shareability",
+    tags: [
+      "city night backdrop; neon sign SHAPES only (no readable words)",
+      "low-angle phone-cam feel; slight motion trail on hair/jackets",
+      "wet asphalt reflections; cinematic contrast",
+      "light leak edges; tiny dust particles",
+      "original influencer face; not a real celebrity"
+    ]
+  }
+};
+
+// 🔒 Lock style
+const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
 /* ---------------- Helpers ---------------- */
 function makeFirstPersonDescription(title, artist) {
@@ -91,16 +151,16 @@ async function nextNewestPick() {
   }
 }
 
-/* ---------------- Locked Image Style ---------------- */
-function stylizedPrompt(title, artist) {
+/* ---------------- Prompt builder (locked style) ---------------- */
+function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE) {
+  const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
   return [
-    `create a high-impact cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
-    "audience: gen-z fan culture (fans).",
+    `create a high-impact, shareable cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
+    `audience: gen-z fan culture (fans). visual goal: ${s.description}.`,
     "make an original pop-idol-adjacent face and styling; do not replicate any real person or celebrity.",
     "absolutely no text, letters, numbers, logos, or watermarks.",
     "square 1:1 composition, clean crop; energetic but tasteful effects.",
-    // 🔒 locked style: always the same vibe
-    "style locked: stan-photocard with glossy k-pop photocard aesthetic."
+    ...s.tags.map(t => `• ${t}`)
   ].join(" ");
 }
 
@@ -210,12 +270,12 @@ app.get("/api/stats", (_req, res) =>
   res.json({ count: imageCount })
 );
 
-// 🔒 root endpoint for Render health check
+// root endpoint for Render health check
 app.get("/", (_req, res) => res.json({ ok: true }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`323drop live backend on :${PORT}`);
+  console.log(`323drop live backend on :${PORT} (style locked: ${DEFAULT_STYLE})`);
   generateNextPick();
 });
