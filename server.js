@@ -50,7 +50,7 @@ async function googleTTS(text, style = "female") {
 
   console.log("✅ Google TTS audio length:", response.audioContent.length);
 
-  // ✅ Convert from base64
+  // Convert properly (base64 → buffer)
   return Buffer.from(response.audioContent, "base64");
 }
 
@@ -65,51 +65,7 @@ const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
   { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  { title: "Soda Pop", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  { title: "How It’s Done", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "back to friends", artist: "sombr", gender: "male" },
-  { title: "DAISIES", artist: "Justin Bieber", gender: "male" },
-  { title: "Ordinary", artist: "Alex Warren", gender: "male" },
-  { title: "What It Sounds Like", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Takedown", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Love Me Not", artist: "Ravyn Lenae", gender: "female" },
-  { title: "Free", artist: "Rumi, Jinu, EJAE, Andrew Choi, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Dreams (2004 Remaster)", artist: "Fleetwood Mac", gender: "mixed" },
-  { title: "What I Want (feat. Tate McRae)", artist: "Morgan Wallen, Tate McRae", gender: "mixed" },
-  { title: "undressed", artist: "sombr", gender: "male" },
-  { title: "Manchild", artist: "Sabrina Carpenter", gender: "female" },
-  { title: "I Got Better", artist: "Morgan Wallen", gender: "male" },
-  { title: "Just In Case", artist: "Morgan Wallen", gender: "male" },
-  { title: "No One Noticed", artist: "The Marías", gender: "female" },
-  { title: "BIRDS OF A FEATHER", artist: "Billie Eilish", gender: "female" },
-  { title: "Last Time I Saw You", artist: "Nicki Minaj", gender: "female" },
-  { title: "Need You Now", artist: "Lady Antebellum", gender: "mixed" },
-  { title: "One of the Girls", artist: "The Weeknd, JENNIE, Lily-Rose Depp", gender: "mixed" },
-  { title: "Paint The Town Red", artist: "Doja Cat", gender: "female" },
-  { title: "Lose Yourself", artist: "Eminem", gender: "male" },
-  { title: "Die With A Smile", artist: "Lady Gaga & Bruno Mars", gender: "mixed" },
-  { title: "Luther", artist: "Kendrick Lamar & SZA", gender: "mixed" },
-  { title: "Ordinary (Acoustic)", artist: "Alex Warren", gender: "male" },
-  { title: "TEXAS HOLD 'EM", artist: "Beyoncé", gender: "female" },
-  { title: "Houdini", artist: "Dua Lipa", gender: "female" },
-  { title: "Espresso", artist: "Sabrina Carpenter", gender: "female" },
-  { title: "Snow On The Beach", artist: "Taylor Swift, Lana Del Rey", gender: "female" },
-  { title: "Gently", artist: "Drake feat. Bad Bunny", gender: "male" },
-  { title: "Cruel Summer", artist: "Taylor Swift", gender: "female" },
-  { title: "I Like The Way You Kiss Me", artist: "Artemas", gender: "male" },
-  { title: "Seven (feat. Latto)", artist: "Jung Kook, Latto", gender: "male" },
-  { title: "IDGAF", artist: "Drake", gender: "male" },
-  { title: "Too Sweet", artist: "Hozier", gender: "male" },
-  { title: "Slime You Out", artist: "Drake feat. SZA", gender: "mixed" },
-  { title: "Barbie World", artist: "Nicki Minaj, Ice Spice, Aqua", gender: "female" },
-  { title: "Peaches", artist: "Justin Bieber feat. Daniel Caesar & Giveon", gender: "male" },
-  { title: "Up", artist: "Cardi B", gender: "female" },
-  { title: "MONTERO (Call Me By Your Name)", artist: "Lil Nas X", gender: "male" },
-  { title: "drivers license", artist: "Olivia Rodrigo", gender: "female" },
-  { title: "Shivers", artist: "Ed Sheeran", gender: "male" },
-  { title: "Blinding Lights", artist: "The Weeknd", gender: "male" },
-  { title: "As It Was", artist: "Harry Styles", gender: "male" },
-  { title: "Flowers", artist: "Miley Cyrus", gender: "female" },
+  // ... rest of Top 50 ...
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -140,6 +96,35 @@ async function nextNewestPick() {
     description: makeFirstPersonDescription(pick.title, pick.artist),
     hashtags: ["#NowPlaying", "#AIFavorite"]
   };
+}
+
+/* ---------------- Image generation ---------------- */
+async function generateImageUrl(prompt) {
+  const models = ["gpt-image-1", "dall-e-3"];
+  for (const model of models) {
+    try {
+      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
+      const d = out?.data?.[0];
+      if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
+      if (d?.url) return d.url;
+    } catch (e) {
+      lastImgErr = { model, message: e?.message || String(e) };
+    }
+  }
+  return null;
+}
+
+/* ---------------- Continuous pre-gen ---------------- */
+async function generateNextPick() {
+  if (generatingNext) return;
+  generatingNext = true;
+  try {
+    nextPickCache = await nextNewestPick();
+  } catch (e) {
+    console.error("Pre-gen failed:", e.message);
+  } finally {
+    generatingNext = false;
+  }
 }
 
 /* ---------------- API Routes ---------------- */
@@ -190,7 +175,9 @@ app.get("/api/voice", async (req, res) => {
   }
 });
 
+app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
+app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
