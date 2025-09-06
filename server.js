@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + OpenAI TTS + Google TTS)
+// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + Google TTS default + OpenAI optional)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -36,10 +36,10 @@ async function googleTTS(text) {
     audioConfig: {
       audioEncoding: "MP3",
       speakingRate: 1.0,
-      pitch: 2.0 // a bit higher = sweeter tone
+      pitch: 2.0
     }
   });
-  return response.audioContent; // Buffer
+  return response.audioContent;
 }
 
 /* ---------------- State ---------------- */
@@ -157,21 +157,23 @@ app.get("/api/trend", async (_req, res) => {
 app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
-    const source = req.query.source || "openai"; // openai | google
+    const source = req.query.source || "google"; // default = google
     const gender = req.query.gender || "neutral";
     if (!text) return res.status(400).json({ error: "Missing text" });
 
     let audioBuffer;
 
-    if (source === "google") {
-      audioBuffer = await googleTTS(text); // Google voice
-    } else {
+    if (source === "openai") {
+      // use OpenAI only if requested
       const out = await openai.audio.speech.create({
         model: "gpt-4o-mini-tts",
         voice: chooseVoiceByGender(gender),
         input: text
       });
       audioBuffer = Buffer.from(await out.arrayBuffer());
+    } else {
+      // default: Google TTS
+      audioBuffer = await googleTTS(text);
     }
 
     res.setHeader("Content-Type", "audio/mpeg");
