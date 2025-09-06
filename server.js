@@ -1,6 +1,5 @@
-<script>
 document.addEventListener("DOMContentLoaded", () => {
-  const API_BASE = "https://three23kbabeai-backend.onrender.com"; 
+  const API_BASE = "https://three23kbabeai-backend.onrender.com"; // replace if needed
   const voicePlayer = new Audio();
 
   const t=document.getElementById("r-title"),
@@ -21,20 +20,17 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadTrend(){
     try{
       info("📡👀💫 323kbabe scanning vibes rn 🎶✨🌈🦄🔥");
+
       overlay.style.display = "flex";
       setTimeout(()=>overlay.style.opacity="1", 10);
 
       const r=await fetch(`${API_BASE}/api/trend?style=stan-photocard`,{cache:"no-store"});
       const j=await r.json();
 
-      // 🔥 wrap everything in emojis
-      t.textContent = `🎶✨🌈 ${j.title?.toLowerCase()||"untitled"} 💿🔥💖`;
-      a.textContent = `👩‍🎤💎 ${j.artist?.toLowerCase()||"unknown"} 🌸🎤✨`;
-      d.textContent = `💖🔥🦋 ${j.description?.toLowerCase()||""} 🌍✨🎶💅`;
-
-      g.innerHTML=(j.hashtags||[]).slice(0,3).map(x=>
-        `<span class="badge">✨${String(x).toLowerCase()}🔥</span>`).join("");
-
+      t.textContent=j.title?.toLowerCase()||"untitled";
+      a.textContent=j.artist?.toLowerCase()||"unknown";
+      d.textContent=j.description?.toLowerCase()||"";
+      g.innerHTML=(j.hashtags||[]).slice(0,3).map(x=>`<span class="badge">${String(x).toLowerCase()}</span>`).join("");
       if(typeof j.count==="number")c.textContent="images dropped: "+j.count;
       if(j.image){
         img.src=j.image; img.style.display="block"; fb.style.display="none";
@@ -42,7 +38,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } else {
         img.style.display="none"; fb.style.display="block";
       }
-      if(j.description) playVoice(j.description, j.artist);
+      if(j.description)playVoice(j.description, j.artist);
 
     }catch(e){
       err("💔⚠️🚨😵❌ fetch flopped… retry soon 😭🔥🪐");
@@ -70,6 +66,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // ✅ attach start button after DOM is ready
   document.getElementById("start-btn").addEventListener("click",()=>{
     document.getElementById("start-screen").style.display="none";
     document.getElementById("app").style.display="block";
@@ -77,4 +74,3 @@ document.addEventListener("DOMContentLoaded", () => {
     overlay.style.pointerEvents="auto";
   });
 });
-</script>
