@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fresh AI trending pick + Random lens + Random genre + No repeats + Diverse desc + Young voice)
+// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + No repeats + Diverse desc + Young voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -26,64 +26,49 @@ const openai = new OpenAI({
 /* ---------------- State ---------------- */
 let imageCount = 0;
 let lastImgErr = null;
-let lastSongs = []; // keep last 5 picks
+let lastSongs = []; // track last 5 picks
 let bannedSongs = ["Paint The Town Red"]; // avoid sticky repeats
 
 /* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
-  "stan-photocard": {
-    description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
-    tags: [
-      "square 1:1 cover, subject centered, shoulders-up or half-body",
-      "flash-lit glossy skin with subtle K-beauty glow",
-      "pastel gradient background (milk pink, baby blue, lilac) with haze",
-      "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
-      "tiny glitter bokeh and lens glints",
-      "clean studio sweep look; light falloff; subtle film grain",
-      "original influencer look — not a specific or real celebrity face"
-    ]
-  },
-  "poster-wall": {
-    description: "DIY bedroom poster wall — shareable fan collage energy",
-    tags: [
-      "layered paper textures with tape corners and torn edges",
-      "implied magazine clippings WITHOUT readable text or logos",
-      "pastel + neon accents, soft shadowed layers",
-      "subject in front with crisp rim light; background defocused collage",
-      "sparkle confetti and star cutouts; tasteful grain",
-      "original, non-celeb face with pop-idol charisma"
-    ]
-  },
-  "glow-stage-fan": {
-    description: "arena lightstick glow — concert-night fan moment",
-    tags: [
-      "dark stage background with colorful beam lights and haze",
-      "bokeh crowd dots; generic lightstick silhouettes (no branding)",
-      "hot rim light on hair and shoulders; motion vibe",
-      "bold neon accents (electric cyan, hot pink, laser purple)",
-      "no text, no numbers, no logos; original performer vibe"
-    ]
-  },
-  "y2k-stickerbomb": {
-    description: "Y2K candycore — playful stickerbomb pop aesthetic",
-    tags: [
-      "candy tones (cotton-candy pink, lime soda, sky cyan); glossy highlights",
-      "airbrush hearts and starbursts as shapes only",
-      "phone-camera flash look with mild bloom",
-      "floating sticker motifs around subject; keep face clean",
-      "no typography; original pop-idol energy"
-    ]
-  },
-  "street-fandom": {
-    description: "urban fan-cam energy — trendy city-night shareability",
-    tags: [
-      "city night backdrop; neon sign SHAPES only (no readable words)",
-      "low-angle phone-cam feel; slight motion trail on hair/jackets",
-      "wet asphalt reflections; cinematic contrast",
-      "light leak edges; tiny dust particles",
-      "original influencer face; not a real celebrity"
-    ]
-  }
+  "stan-photocard": { description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture", tags: [
+    "square 1:1 cover, subject centered, shoulders-up or half-body",
+    "flash-lit glossy skin with subtle K-beauty glow",
+    "pastel gradient background (milk pink, baby blue, lilac) with haze",
+    "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
+    "tiny glitter bokeh and lens glints",
+    "clean studio sweep look; light falloff; subtle film grain",
+    "original influencer look — not a specific or real celebrity face"
+  ]},
+  "poster-wall": { description: "DIY bedroom poster wall — shareable fan collage energy", tags: [
+    "layered paper textures with tape corners and torn edges",
+    "implied magazine clippings WITHOUT readable text or logos",
+    "pastel + neon accents, soft shadowed layers",
+    "subject in front with crisp rim light; background defocused collage",
+    "sparkle confetti and star cutouts; tasteful grain",
+    "original, non-celeb face with pop-idol charisma"
+  ]},
+  "glow-stage-fan": { description: "arena lightstick glow — concert-night fan moment", tags: [
+    "dark stage background with colorful beam lights and haze",
+    "bokeh crowd dots; generic lightstick silhouettes (no branding)",
+    "hot rim light on hair and shoulders; motion vibe",
+    "bold neon accents (electric cyan, hot pink, laser purple)",
+    "no text, no numbers, no logos; original performer vibe"
+  ]},
+  "y2k-stickerbomb": { description: "Y2K candycore — playful stickerbomb pop aesthetic", tags: [
+    "candy tones (cotton-candy pink, lime soda, sky cyan); glossy highlights",
+    "airbrush hearts and starbursts as shapes only",
+    "phone-camera flash look with mild bloom",
+    "floating sticker motifs around subject; keep face clean",
+    "no typography; original pop-idol energy"
+  ]},
+  "street-fandom": { description: "urban fan-cam energy — trendy city-night shareability", tags: [
+    "city night backdrop; neon sign SHAPES only (no readable words)",
+    "low-angle phone-cam feel; slight motion trail on hair/jackets",
+    "wet asphalt reflections; cinematic contrast",
+    "light leak edges; tiny dust particles",
+    "original influencer face; not a real celebrity"
+  ]}
 };
 
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
@@ -108,7 +93,7 @@ function cleanForPrompt(str = "") {
 /* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
-    // Pick a random lens + genre to add variety
+    // Randomize lens + genre + community
     const lensOptions = [
       "TikTok dance challenge",
       "remix that’s trending",
@@ -126,10 +111,19 @@ async function nextNewestPick() {
       "trap",
       "afrobeat"
     ];
+    const communityOptions = [
+      "Latino TikTok communities",
+      "Black US/UK hip hop scenes",
+      "Korean and Japanese fandoms",
+      "African dance scenes",
+      "Indie/alt online kids"
+    ];
+
     const randomLens = lensOptions[Math.floor(Math.random() * lensOptions.length)];
     const randomGenre = genreOptions[Math.floor(Math.random() * genreOptions.length)];
+    const randomCommunity = communityOptions[Math.floor(Math.random() * communityOptions.length)];
 
-    // Step 1: ask GPT for a real trending song with variety
+    // Step 1: ask GPT for a real trending song
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 1.0,
@@ -140,7 +134,7 @@ async function nextNewestPick() {
           content: `Pick ONE real trending song that is viral right now. 
           Avoid repeats from recent picks: ${JSON.stringify(lastSongs)}. 
           Do not include banned songs: ${JSON.stringify(bannedSongs)}. 
-          This time, focus on a ${randomLens} in the ${randomGenre} scene. 
+          This time, focus on a ${randomLens} in the ${randomGenre} scene, especially what ${randomCommunity} are pushing viral. 
           Reply ONLY as JSON { "title": "...", "artist": "..." }.`
         }
       ]
@@ -153,7 +147,7 @@ async function nextNewestPick() {
       pick = { title: "Unknown", artist: "Unknown" };
     }
 
-    // Step 2: fresh diverse description
+    // Step 2: generate fresh diverse description
     let descOut = "";
     try {
       const desc = await openai.chat.completions.create({
@@ -164,7 +158,7 @@ async function nextNewestPick() {
           { 
             role: "user", 
             content: `Write a unique 60-80 word first-person description of "${pick.title}" by ${pick.artist}. 
-            Focus on different aspects each time (lyrics, beat, dance challenge, remix, meme use, emotional vibe, or TikTok reactions).`
+            Focus on a different aspect (lyrics, beat, dance challenge, remix, meme use, emotional vibe, or TikTok reactions).`
           }
         ]
       });
