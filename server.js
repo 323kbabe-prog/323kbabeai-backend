@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice + Pre-generation)
+// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice + Spotify Top 50 fallback)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -90,6 +90,27 @@ function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
 }
 
+/* ---------------- Spotify Top 50 fallback ---------------- */
+async function getSpotifyTop50() {
+  try {
+    const res = await fetch("https://spotifycharts.com/regional/global/daily/latest/download");
+    const text = await res.text();
+    const rows = text.split("\n").slice(2); // skip headers
+    const songs = rows.map(r => r.split(",")).filter(r => r.length > 2);
+
+    if (songs.length > 0) {
+      const [ , title, artist ] = songs[Math.floor(Math.random() * songs.length)];
+      return { 
+        title: title.replace(/"/g, "").trim(), 
+        artist: artist.replace(/"/g, "").trim() 
+      };
+    }
+  } catch (err) {
+    console.error("⚠️ Spotify Top 50 fetch failed:", err.message);
+  }
+  return { title: "Fresh Drop", artist: "AI DJ" };
+}
+
 /* ---------------- AI Favorite Pick ---------------- */
 async function nextNewestPick() {
   try {
@@ -123,6 +144,7 @@ async function nextNewestPick() {
     const randomGenre = genreOptions[Math.floor(Math.random() * genreOptions.length)];
     const randomCommunity = communityOptions[Math.floor(Math.random() * communityOptions.length)];
 
+    // Step 1: ask GPT for a real trending song
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 1.0,
@@ -141,12 +163,15 @@ async function nextNewestPick() {
 
     let pick;
     try {
-      pick = JSON.parse(completion.choices[0].message.content || "{}");
+      let raw = completion.choices[0].message.content || "{}";
+      raw = raw.replace(/```json|```/g, "").trim();
+      pick = JSON.parse(raw);
     } catch {
-      pick = { title: "Unknown", artist: "Unknown" };
+      console.error("⚠️ GPT parse failed, using Spotify Top 50 fallback");
+      pick = await getSpotifyTop50();
     }
 
-    // Fresh diverse description
+    // Step 2: generate fresh diverse description
     const angleOptions = [
       "lyrics everyone is quoting",
       "beat/production that makes people move",
@@ -200,12 +225,13 @@ async function nextNewestPick() {
       descOut = "This track is buzzing everywhere right now.";
     }
 
+    // Step 3: update history
     lastSongs.push({ title: pick.title, artist: pick.artist });
     if (lastSongs.length > 5) lastSongs.shift();
 
     return {
-      title: pick.title || "Unknown",
-      artist: pick.artist || "Unknown",
+      title: pick.title,
+      artist: pick.artist,
       desc: descOut,
       hashtags: ["#NowPlaying", "#TrendingNow", "#AIFavorite"]
     };
@@ -235,35 +261,41 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   ].join(" ");
 }
 
-/* ---------------- Image generation ---------------- */
+/* ---------------- Image generation + fallbacks ---------------- */
 async function generateImageUrl(prompt) {
-  try {
-    console.time("⏱ imageGen");
-
-    const out = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt,
-      size: "1024x1024",
-      response_format: "b64_json"
-    });
-
-    console.timeEnd("⏱ imageGen");
-
-    const b64 = out?.data?.[0]?.b64_json;
-    return b64 ? `data:image/png;base64,${b64}` : null;
-  } catch (e) {
-    console.timeEnd("⏱ imageGen");
-    lastImgErr = {
-      model: "gpt-image-1",
-      status: e?.status || e?.response?.status || null,
-      message: e?.response?.data?.error?.message || e?.message || String(e),
-    };
-    console.error("[images]", lastImgErr);
-    return null;
+  const models = gpt-image-1;
+  for (const model of models) {
+    try {
+      const out = await openai.images.generate({ model, prompt, size: "1024x1024", response_format: "b64_json" });
+      const d = out?.data?.[0];
+      const b64 = d?.b64_json;
+      const url = d?.url;
+      if (b64) return `data:image/png;base64,${b64}`;
+      if (url)  return url;
+    } catch (e) {
+      lastImgErr = {
+        model,
+        status: e?.status || e?.response?.status || null,
+        message: e?.response?.data?.error?.message || e?.message || String(e),
+      };
+      console.error("[images]", lastImgErr);
+    }
   }
+  return null;
 }
 
-/* ---------------- SSE stream (pre-generated) ---------------- */
+/* ---------------- Diagnostics ---------------- */
+app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
+app.get("/diag/env", (_req,res) => res.json({
+  has_OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
+  has_OPENAI_ORG_ID:  Boolean(process.env.OPENAI_ORG_ID),
+  DEFAULT_STYLE,
+  node: process.version,
+}));
+app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
+app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
+
+/* ---------------- SSE stream ---------------- */
 app.get("/api/trend-stream", async (req, res) => {
   res.set({
     "Content-Type": "text/event-stream",
@@ -279,27 +311,32 @@ app.get("/api/trend-stream", async (req, res) => {
   try {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
+    send("status", { msg: "generating image…" });
     const imageUrl = await generateImageUrl(prompt);
-    if (imageUrl) imageCount += 1;
+    if (lastImgErr) send("diag", lastImgErr);
 
-    send("trend", {
-      ...pick,
-      image: imageUrl,
-      count: imageCount
-    });
+    send("trend", pick);
 
-    send("status", { msg: imageUrl ? "done" : "image unavailable." });
-    send("end", { ok: true });
+    if (imageUrl) {
+      imageCount += 1;
+      send("count", { count: imageCount });
+      send("image", { src: imageUrl });
+      send("status", { msg: "done" });
+      send("end", { ok:true });
+    } else {
+      send("status", { msg: "image unavailable." });
+      send("end", { ok:false });
+    }
   } catch (e) {
     send("status", { msg: `error: ${e?.message || e}` });
-    send("end", { ok: false });
+    send("end", { ok:false });
   } finally {
     clearInterval(hb);
     res.end();
   }
 });
 
-/* ---------------- JSON one-shot (pre-generated) ---------------- */
+/* ---------------- JSON one-shot ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
     const pick = await nextNewestPick();
@@ -308,7 +345,10 @@ app.get("/api/trend", async (_req, res) => {
     if (imageUrl) imageCount += 1;
 
     res.json({
-      ...pick,
+      title: pick.title,
+      artist: pick.artist,
+      description: pick.desc,
+      hashtags: pick.hashtags,
       image: imageUrl,
       count: imageCount
     });
