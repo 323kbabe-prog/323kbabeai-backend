@@ -245,23 +245,23 @@ app.get("/api/trend-stream", async (req, res) => {
   }
 });
 
-/* ---------------- Voice (TTS) ---------------- */
-app.get("/api/voice", async (req, res) => {
+/* ---------------- Voice Generator ---------------- */
+async function generateVoice(text, voice = "bright") {
   try {
-    const text = req.query.text || "";
-    if (!text) return res.status(400).json({ error: "Missing text" });
-    const out = await openai.audio.speech.create({
+    const speech = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: chooseVoice(req.query.artist || ""),
-      input: text,
+      voice,   // 👈 change this: "bright", "serene", "alloy", "warm", etc.
+      input: text
     });
-    const buffer = Buffer.from(await out.arrayBuffer());
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(buffer);
-  } catch {
-    res.status(500).json({ error: "TTS failed" });
+
+    const buffer = Buffer.from(await speech.arrayBuffer());
+    return `data:audio/mp3;base64,${buffer.toString("base64")}`;
+  } catch (err) {
+    console.error("Voice error:", err);
+    return null;
   }
-});
+}
+
 
 /* ---------------- Diagnostics ---------------- */
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
