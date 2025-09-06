@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice + Faster image gen timer)
+// server.js — 323drop Live (Fresh AI trending pick + Lens + Genre + Community + Diverse desc algorithm + No repeats + Young voice + Pre-generation)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -123,7 +123,6 @@ async function nextNewestPick() {
     const randomGenre = genreOptions[Math.floor(Math.random() * genreOptions.length)];
     const randomCommunity = communityOptions[Math.floor(Math.random() * communityOptions.length)];
 
-    // Step 1: ask GPT for a real trending song
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 1.0,
@@ -147,7 +146,7 @@ async function nextNewestPick() {
       pick = { title: "Unknown", artist: "Unknown" };
     }
 
-    // Step 2: generate fresh diverse description
+    // Fresh diverse description
     const angleOptions = [
       "lyrics everyone is quoting",
       "beat/production that makes people move",
@@ -201,7 +200,6 @@ async function nextNewestPick() {
       descOut = "This track is buzzing everywhere right now.";
     }
 
-    // Step 3: update history
     lastSongs.push({ title: pick.title, artist: pick.artist });
     if (lastSongs.length > 5) lastSongs.shift();
 
@@ -237,24 +235,24 @@ function stylizedPrompt(title, artist, styleKey = DEFAULT_STYLE, extraVibe = [],
   ].join(" ");
 }
 
-/* ---------------- Image generation (single model + timer) ---------------- */
+/* ---------------- Image generation ---------------- */
 async function generateImageUrl(prompt) {
   try {
-    console.time("⏱ imageGen");  // start timer
+    console.time("⏱ imageGen");
 
     const out = await openai.images.generate({
-      model: "gpt-image-1",       // only one model now
+      model: "gpt-image-1",
       prompt,
-      size: "1024x1024",          // keep quality
-      response_format: "b64_json" // base64 so frontend works
+      size: "1024x1024",
+      response_format: "b64_json"
     });
 
-    console.timeEnd("⏱ imageGen"); // log duration
+    console.timeEnd("⏱ imageGen");
 
     const b64 = out?.data?.[0]?.b64_json;
     return b64 ? `data:image/png;base64,${b64}` : null;
   } catch (e) {
-    console.timeEnd("⏱ imageGen"); // ensure timer ends
+    console.timeEnd("⏱ imageGen");
     lastImgErr = {
       model: "gpt-image-1",
       status: e?.status || e?.response?.status || null,
@@ -265,18 +263,7 @@ async function generateImageUrl(prompt) {
   }
 }
 
-/* ---------------- Diagnostics ---------------- */
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
-app.get("/diag/env", (_req,res) => res.json({
-  has_OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
-  has_OPENAI_ORG_ID:  Boolean(process.env.OPENAI_ORG_ID),
-  DEFAULT_STYLE,
-  node: process.version,
-}));
-app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req, res) => res.set("Cache-Control","no-store").json({ count: imageCount }));
-
-/* ---------------- SSE stream ---------------- */
+/* ---------------- SSE stream (pre-generated) ---------------- */
 app.get("/api/trend-stream", async (req, res) => {
   res.set({
     "Content-Type": "text/event-stream",
@@ -292,32 +279,27 @@ app.get("/api/trend-stream", async (req, res) => {
   try {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
-    send("status", { msg: "generating image…" });
     const imageUrl = await generateImageUrl(prompt);
-    if (lastImgErr) send("diag", lastImgErr);
+    if (imageUrl) imageCount += 1;
 
-    send("trend", pick);
+    send("trend", {
+      ...pick,
+      image: imageUrl,
+      count: imageCount
+    });
 
-    if (imageUrl) {
-      imageCount += 1;
-      send("count", { count: imageCount });
-      send("image", { src: imageUrl });
-      send("status", { msg: "done" });
-      send("end", { ok:true });
-    } else {
-      send("status", { msg: "image unavailable." });
-      send("end", { ok:false });
-    }
+    send("status", { msg: imageUrl ? "done" : "image unavailable." });
+    send("end", { ok: true });
   } catch (e) {
     send("status", { msg: `error: ${e?.message || e}` });
-    send("end", { ok:false });
+    send("end", { ok: false });
   } finally {
     clearInterval(hb);
     res.end();
   }
 });
 
-/* ---------------- JSON one-shot ---------------- */
+/* ---------------- JSON one-shot (pre-generated) ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
     const pick = await nextNewestPick();
@@ -326,10 +308,7 @@ app.get("/api/trend", async (_req, res) => {
     if (imageUrl) imageCount += 1;
 
     res.json({
-      title: pick.title,
-      artist: pick.artist,
-      description: pick.desc,
-      hashtags: pick.hashtags,
+      ...pick,
       image: imageUrl,
       count: imageCount
     });
