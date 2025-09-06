@@ -245,33 +245,23 @@ app.get("/api/trend-stream", async (req, res) => {
   }
 });
 
-/* ---------------- Voice Generator ---------------- */
-const voicesCycle = ["serene", "alloy"]; // female → male
-let voiceIndex = 0;
-
-async function generateVoice(text) {
+/* ---------------- Voice (TTS) ---------------- */
+app.get("/api/voice", async (req, res) => {
   try {
-    // pick next voice from cycle
-    const voice = voicesCycle[voiceIndex];
-    voiceIndex = (voiceIndex + 1) % voicesCycle.length;
-
-    const speech = await openai.audio.speech.create({
+    const text = req.query.text || "";
+    if (!text) return res.status(400).json({ error: "Missing text" });
+    const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice,
-      input: text
+      voice: chooseVoice(req.query.artist || ""),
+      input: text,
     });
-
-    const buffer = Buffer.from(await speech.arrayBuffer());
-    return {
-      audio: `data:audio/mp3;base64,${buffer.toString("base64")}`,
-      voice // 👈 tells you which one was used
-    };
-  } catch (err) {
-    console.error("Voice error:", err);
-    return null;
+    const buffer = Buffer.from(await out.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(buffer);
+  } catch {
+    res.status(500).json({ error: "TTS failed" });
   }
-}
-
+});
 
 /* ---------------- Diagnostics ---------------- */
 app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
