@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + TTS + Pre-gen)
+// server.js — 323drop Live (Spotify Top 50 USA + Gender + Algorithm + Google TTS default + OpenAI fallback + Pre-gen)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -39,10 +39,12 @@ async function googleTTS(text, style = "female") {
     audioConfig: {
       audioEncoding: "MP3",
       speakingRate: 1.0,
-      pitch: style === "female" ? 2.0 : 1.5
+      pitch: style === "female" ? 1.5 : 0.0
     }
   });
-  return response.audioContent;
+
+  // ✅ Proper buffer conversion
+  return Buffer.from(response.audioContent, "binary");
 }
 
 /* ---------------- State ---------------- */
@@ -104,44 +106,15 @@ const TOP50_USA = [
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
-/* ---------------- Style Presets ---------------- */
-const STYLE_PRESETS = {
-  "stan-photocard": {
-    description: "lockscreen-ready idol photocard vibe for Gen-Z fan culture",
-    tags: [
-      "square 1:1 cover, subject centered, shoulders-up or half-body",
-      "flash-lit glossy skin with subtle K-beauty glow",
-      "pastel gradient background (milk pink, baby blue, lilac) with haze",
-      "sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
-      "tiny glitter bokeh and lens glints",
-      "clean studio sweep look; light falloff; subtle film grain",
-      "original influencer look — not a specific or real celebrity face"
-    ]
-  }
-};
-const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
-
 /* ---------------- Helpers ---------------- */
 function makeFirstPersonDescription(title, artist) {
-  return `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. The melody sticks in my head like glue, the vocals feel alive, and every replay makes it more addictive.`;
+  return `I just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal.`;
 }
 function pickSongAlgorithm() {
   const weightTop = 0.7;
   const pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
   const idx = Math.floor(Math.pow(Math.random(), 1.5) * pool.length);
   return pool[idx];
-}
-function stylizedPrompt(title, artist, gender, styleKey = DEFAULT_STYLE) {
-  const s = STYLE_PRESETS[styleKey] || STYLE_PRESETS["stan-photocard"];
-  return [
-    `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
-    `Audience: Gen-Z fan culture. Visual goal: ${s.description}.`,
-    "Make an ORIGINAL idol-like face and styling; do NOT replicate real celebrities.",
-    "No text, logos, or watermarks.",
-    "Square 1:1 composition.",
-    `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`,
-    ...s.tags.map(t => `• ${t}`)
-  ].join(" ");
 }
 function chooseVoiceByGender(gender = "neutral") {
   if (gender === "female") return "shimmer";
@@ -184,7 +157,7 @@ async function generateNextPick() {
   generatingNext = true;
   try {
     const pick = await nextNewestPick();
-    const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
+    const prompt = `Cover image for ${pick.title} by ${pick.artist}`;
     const imageUrl = await generateImageUrl(prompt);
     if (imageUrl) imageCount += 1;
     nextPickCache = { ...pick, image: imageUrl, count: imageCount };
@@ -200,33 +173,13 @@ app.get("/api/trend", async (_req, res) => {
     result = nextPickCache; nextPickCache = null; generateNextPick();
   } else {
     const pick = await nextNewestPick();
-    const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender);
+    const prompt = `Cover image for ${pick.title} by ${pick.artist}`;
     const imageUrl = await generateImageUrl(prompt);
     if (imageUrl) imageCount += 1;
     result = { ...pick, image: imageUrl, count: imageCount };
     generateNextPick();
   }
   res.json(result);
-});
-
-app.get("/api/trend-stream", async (req, res) => {
-  res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
-  const send = (ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
-  const hb = setInterval(() => res.write(":keepalive\n\n"), 15015);
-
-  try {
-    let pick;
-    if (nextPickCache) { pick = nextPickCache; nextPickCache = null; generateNextPick(); }
-    else { pick = await nextNewestPick(); const prompt = stylizedPrompt(pick.title, pick.artist, pick.gender); pick.image = await generateImageUrl(prompt); if (pick.image) imageCount += 1; pick.count = imageCount; generateNextPick(); }
-
-    send("trend", pick);
-    if (pick.image) { send("count", { count: pick.count }); send("image", { src: pick.image }); send("status", { msg: "done" }); send("end", { ok:true }); }
-    else { send("status", { msg: "image unavailable." }); send("end", { ok:false }); }
-  } catch (e) {
-    send("status", { msg: `error: ${e.message}` }); send("end", { ok:false }); }
-  finally {
-    clearInterval(hb); res.end();
-  }
 });
 
 /* ---------------- Voice (Google default, OpenAI fallback) ---------------- */
