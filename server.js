@@ -1,222 +1,205 @@
-// server.js — multi-source persona song picker with locked image style
-// Node >= 20, CommonJS
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>323drop — gen z vibes</title>
+<style>
+  body {
+    margin:0;
+    color:#fff;
+    font-family: 'Inter', sans-serif;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    background: linear-gradient(-45deg, #ff00cc, #3333ff, #00ffee, #ff9900);
+    background-size: 400% 400%;
+    animation: gradientShift 12s ease infinite;
+  }
+  @keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
 
-const express = require("express");
-const cors = require("cors");
-const OpenAI = require("openai");
+  #start-screen {
+    display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;
+  }
+  #start-btn {
+    background:linear-gradient(90deg,#00ffcc,#00aaff);
+    color:#000;font-size:22px;font-weight:bold;
+    padding:16px 32px;border:none;border-radius:30px;cursor:pointer;
+    box-shadow:0 0 20px rgba(0,255,204,.5);transition:transform .2s ease;
+    text-transform:lowercase;
+  }
+  #start-btn:hover { transform:scale(1.05); }
 
-const app = express();
+  .card {
+    background:rgba(20,20,20,0.8);
+    border-radius:24px; padding:24px; margin:20px auto; max-width:600px;
+    backdrop-filter: blur(10px);
+    border:2px solid transparent;
+    box-shadow:0 0 25px rgba(0,255,204,.4);
+    animation: pulseBorder 3s infinite alternate;
+  }
+  @keyframes pulseBorder {
+    0% { box-shadow:0 0 15px rgba(255,0,255,.5); }
+    100% { box-shadow:0 0 35px rgba(0,255,255,.7); }
+  }
 
-/* ---------------- CORS ---------------- */
-const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
-app.use(
-  cors({
-    origin: (origin, cb) =>
-      !origin || ALLOW.includes(origin)
-        ? cb(null, true)
-        : cb(new Error("CORS: origin not allowed")),
-    methods: ["GET", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-    maxAge: 86400,
-  })
-);
+  .title { font-size:26px; font-weight:800; margin:0.3em 0; color:#00ffcc; text-transform:lowercase; }
+  .artist { font-size:20px; font-weight:600; opacity:.95; color:#fff; text-transform:lowercase; }
+  .desc { margin:1em 0; font-size:15px; line-height:1.5; color:#eee; text-transform:lowercase; }
 
-/* ---------------- OpenAI ---------------- */
-if (!process.env.OPENAI_API_KEY) {
-  console.error("❌ Missing OPENAI_API_KEY");
-  process.exit(1);
-}
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  .badge {
+    display:inline-block; margin:6px; padding:6px 14px;
+    background:linear-gradient(135deg,#ff00ff,#00ffff);
+    border-radius:20px; font-size:13px; font-weight:bold; color:#000;
+    box-shadow:0 0 20px rgba(255,0,255,.6);
+    text-transform:lowercase;
+    animation: floaty 2s ease-in-out infinite alternate;
+  }
+  @keyframes floaty {
+    from { transform:translateY(0px); }
+    to { transform:translateY(-4px); }
+  }
 
-/* ---------------- Personas ---------------- */
-const personas = [
-  "17-year-old black male hip-hop fan in atlanta",
-  "22-year-old korean female k-pop stan in seoul",
-  "30-year-old latino reggaeton fan in los angeles",
-  "40-year-old white indie-rock dad in chicago",
-  "19-year-old indian edm raver in mumbai",
-  "25-year-old japanese anime-pop fan in tokyo",
-  "28-year-old african female afrobeats lover in lagos"
-];
-function randomPersona() {
-  return personas[Math.floor(Math.random() * personas.length)];
-}
+  .fallback {
+    color:#aaa; border:2px dashed #333; border-radius:20px; padding:20px; text-align:center;
+    font-style:italic; text-transform:lowercase;
+  }
 
-/* ---------------- Mock trending fetchers (replace with real APIs later) ---------------- */
-async function fetchSpotifyTop() {
-  return [
-    { title: "Paint The Town Red", artist: "Doja Cat" },
-    { title: "Feather", artist: "Sabrina Carpenter" }
-  ];
-}
-async function fetchAppleTop() {
-  return [
-    { title: "Water", artist: "Tyla" },
-    { title: "Good Luck, Babe!", artist: "Chappell Roan" }
-  ];
-}
-async function fetchYouTubeTop() {
-  return [
-    { title: "Espresso", artist: "Sabrina Carpenter" },
-    { title: "Lose Control", artist: "Teddy Swims" }
-  ];
-}
-async function fetchTikTokViral() {
-  return [
-    { title: "Not Like Us", artist: "Kendrick Lamar" },
-    { title: "Please Please Please", artist: "Sabrina Carpenter" }
-  ];
-}
-async function fetchGoogleTrends() {
-  return [
-    { title: "Gata Only", artist: "FloyyMenor ft. Cris MJ" },
-    { title: "Desire", artist: "Calvin Harris & Sam Smith" }
-  ];
-}
+  .console {
+    font-family:monospace; background:#111; border-radius:16px; padding:12px;
+    margin:20px; max-height:200px; overflow:auto;
+    border:1px solid #222; box-shadow:inset 0 0 10px rgba(0,255,204,.2);
+    font-size:13px; color:#0ff; text-transform:lowercase;
+  }
 
-/* ---------------- Merge trending lists ---------------- */
-async function fetchAllSongs() {
-  const all = [
-    ...(await fetchSpotifyTop()),
-    ...(await fetchAppleTop()),
-    ...(await fetchYouTubeTop()),
-    ...(await fetchTikTokViral()),
-    ...(await fetchGoogleTrends())
-  ];
-  const seen = new Set();
-  return all.filter(song => {
-    const key = `${song.title}-${song.artist}`.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
+  #loading-overlay {
+    display:none;
+    position:fixed; top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,0.95);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    font-size:26px;font-weight:bold;color:#00ffcc;
+    z-index:9999;opacity:0;transition:opacity 0.3s ease;
+    pointer-events:none;
+    text-transform:lowercase;
+  }
+  .spinner {
+    border:6px solid #222;
+    border-top:6px solid #00ffcc;
+    border-radius:50%;
+    width:60px;height:60px;
+    animation:spin 1s linear infinite;
+    margin-bottom:24px;
+    box-shadow:0 0 30px rgba(0,255,204,.8);
+  }
+  @keyframes spin { from {transform:rotate(0deg);} to {transform:rotate(360deg);} }
+</style>
+</head>
+<body>
+<div id="start-screen">
+  <button id="start-btn">🔊 start with voice</button>
+</div>
 
-/* ---------------- GPT Song Selection ---------------- */
-async function pickSongWithPersona(persona, songs) {
-  const listText = songs
-    .map((s, i) => `${i + 1}. ${s.title} – ${s.artist}`)
-    .join("\n");
+<div id="app" style="display:none;width:100%;max-width:700px;">
+  <section class="card">
+    <div class="title" id="r-title">—</div>
+    <div class="artist" id="r-artist">—</div>
+    <p class="desc" id="r-desc">—</p>
+    <div id="voice-status"></div>
+    <div id="r-tags"></div>
+    <div id="r-count"></div>
+    <img id="r-img" alt="trend image" style="width:100%;display:none;border-radius:20px;margin-top:12px;" />
+    <div id="r-fallback" class="fallback">no image yet</div>
+  </section>
+  <div class="console" id="log"></div>
+</div>
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [
-      { role: "system", content: "you are a music trend selector." },
-      {
-        role: "user",
-        content: `You are acting as ${persona}.
-From the following list of trending songs, pick ONE that best matches your vibe. 
-Reply ONLY as JSON { "title": "...", "artist": "..." }.
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  323kbabe searching...
+</div>
 
-List:
-${listText}`
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const API_BASE = "https://three23kbabeai-backend.onrender.com"; 
+  const voicePlayer = new Audio();
+
+  const t=document.getElementById("r-title"),
+        a=document.getElementById("r-artist"),
+        d=document.getElementById("r-desc"),
+        g=document.getElementById("r-tags"),
+        c=document.getElementById("r-count"),
+        img=document.getElementById("r-img"),
+        fb=document.getElementById("r-fallback"),
+        voiceStatus=document.getElementById("voice-status"),
+        logEl=document.getElementById("log"),
+        overlay=document.getElementById("loading-overlay");
+
+  function ts(){return new Date().toLocaleTimeString([], {hour12:false});}
+  function line(msg){const p=document.createElement("p");p.innerHTML=`<span>[${ts()}]</span> ${msg}`;logEl.appendChild(p);logEl.scrollTop=logEl.scrollHeight;}
+  function info(m){line(m);}function ok(m){line(m);}function err(m){line(m);}
+
+  async function loadTrend(){
+    try{
+      info("📡👀💫 323kbabe scanning vibes rn 🎶✨🌈🦄🔥");
+      overlay.style.display = "flex";
+      setTimeout(()=>overlay.style.opacity="1", 10);
+
+      const r=await fetch(`${API_BASE}/api/trend?style=stan-photocard`,{cache:"no-store"});
+      const j=await r.json();
+
+      // wrap content with emojis 🎶🔥✨
+      t.textContent = `🎶✨🌈 ${j.title?.toLowerCase()||"untitled"} 💿🔥💖`;
+      a.textContent = `👩‍🎤💎 ${j.artist?.toLowerCase()||"unknown"} 🌸🎤✨`;
+      d.textContent = `💖🔥🦋 ${j.description?.toLowerCase()||""} 🌍✨🎶💅`;
+
+      g.innerHTML=(j.hashtags||[]).slice(0,3).map(x=>
+        `<span class="badge">✨${String(x).toLowerCase()}🔥</span>`).join("");
+
+      if(typeof j.count==="number")c.textContent="images dropped: "+j.count;
+      if(j.image){
+        img.src=j.image; img.style.display="block"; fb.style.display="none";
+        ok("🌈✨🦋🔥🖼️💿 image ready babe 💅💖🌸🌍");
+      } else {
+        img.style.display="none"; fb.style.display="block";
       }
-    ]
+      if(j.description) playVoice(j.description, j.artist);
+
+    }catch(e){
+      err("💔⚠️🚨😵❌ fetch flopped… retry soon 😭🔥🪐");
+    }finally{
+      overlay.style.opacity = "0";
+      setTimeout(()=>overlay.style.display="none", 300);
+    }
+  }
+
+  async function playVoice(text, artist){
+    try{
+      voiceStatus.textContent="🎤🔊✨ ai voice loading…";
+      const url=`${API_BASE}/api/voice?text=${encodeURIComponent(text)}&artist=${encodeURIComponent(artist||"")}`;
+      voicePlayer.src=url;
+      await voicePlayer.play();
+      ok("🎤🎶💖🔊✨ sweet ai voice on air 💅🌸🔥");
+      voicePlayer.onended=()=>{
+        voiceStatus.textContent="";
+        setTimeout(loadTrend, 3000);
+      };
+    }catch(e){
+      err("🔇😢💔😭💤 voice broke… silence vibes rn 😔✨");
+      voiceStatus.textContent="";
+      setTimeout(loadTrend, 3000);
+    }
+  }
+
+  document.getElementById("start-btn").addEventListener("click",()=>{
+    document.getElementById("start-screen").style.display="none";
+    document.getElementById("app").style.display="block";
+    loadTrend();
+    overlay.style.pointerEvents="auto";
   });
-
-  let pick = {};
-  try {
-    pick = JSON.parse(completion.choices[0].message.content);
-  } catch {
-    pick = songs[Math.floor(Math.random() * songs.length)];
-  }
-  return pick;
-}
-
-/* ---------------- Description Helper ---------------- */
-function makeFirstPersonDescription(title, artist) {
-  const options = [
-    `i just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal...`,
-    `when “${title}” comes on, i can’t help but stop scrolling and let it run...`,
-    `i’ve had “${title}” by ${artist} stuck in my head all day, and it’s not leaving anytime soon...`,
-    `listening to “${title}” makes me feel like i’m in on the trend before it blows up...`,
-    `every time i hear “${title}” by ${artist}, i get that rush that only a viral track can bring...`
-  ];
-  return options[Math.floor(Math.random() * options.length)];
-}
-
-/* ---------------- Image Generation (locked style) ---------------- */
-function stylizedPrompt(title, artist) {
-  return [
-    `create a high-impact cover image for the song "${title}" by ${artist}.`,
-    "audience: gen-z fan culture (fans). visual goal: stan-photocard idol photocard vibe.",
-    "make an original pop-idol-adjacent face and styling; do not replicate any real person or celebrity.",
-    "absolutely no text, letters, numbers, logos, or watermarks.",
-    "square 1:1 composition, glossy k-pop look, pastel gradient background, subtle film grain."
-  ].join(" ");
-}
-
-async function generateImageUrl(prompt) {
-  try {
-    const out = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt,
-      size: "1024x1024",
-      response_format: "b64_json"
-    });
-    const d = out?.data?.[0];
-    if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
-    if (d?.url) return d.url;
-  } catch (e) {
-    console.error("[image error]", e.message);
-  }
-  return null;
-}
-
-/* ---------------- API Endpoint ---------------- */
-app.get("/api/trend", async (_req, res) => {
-  try {
-    const persona = randomPersona();
-    const songs = await fetchAllSongs();
-    const pick = await pickSongWithPersona(persona, songs);
-    const description = makeFirstPersonDescription(pick.title, pick.artist);
-    const image = await generateImageUrl(stylizedPrompt(pick.title, pick.artist));
-
-    res.json({
-      title: pick.title,
-      artist: pick.artist,
-      persona,
-      description,
-      hashtags: ["#nowplaying", "#fyp", "#stanvibes"],
-      image
-    });
-  } catch (e) {
-    console.error("trend error", e);
-    res.json({
-      title: "fallback song",
-      artist: "ai dj",
-      persona: "neutral",
-      description: "this is a fallback track when things break.",
-      hashtags: ["#ai"],
-      image: null
-    });
-  }
 });
-
-/* ---------------- Voice (TTS) ---------------- */
-app.get("/api/voice", async (req, res) => {
-  try {
-    const text = req.query.text || "";
-    if (!text) return res.status(400).json({ error: "missing text" });
-    const out = await openai.audio.speech.create({
-      model: "gpt-4o-mini-tts",
-      voice: "alloy",
-      input: text,
-    });
-    const buffer = Buffer.from(await out.arrayBuffer());
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(buffer);
-  } catch {
-    res.status(500).json({ error: "tts failed" });
-  }
-});
-
-/* ---------------- Health ---------------- */
-app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
-app.get("/", (_req, res) => res.json({ ok: true }));
-
-/* ---------------- Start ---------------- */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`✅ multi-source song picker live on :${PORT}`);
-});
+</script>
+</body>
+</html>
