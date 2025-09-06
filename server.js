@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + Fresh AI description + Safe prompt sanitization + No repeat)
+// server.js — 323drop Live (AI Favorite Pick + Always Korean Idol + Fresh AI description + Safe prompt sanitization + No repeat + Young voice only)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -98,7 +98,8 @@ function chooseVoice(artist = "") {
   const lower = artist.toLowerCase();
   if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; // young female
   if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  // young male
-  return "alloy"; // fallback neutral
+  // always fallback to young female
+  return "shimmer";
 }
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
