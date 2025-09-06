@@ -1,4 +1,4 @@
-// server.js — 323drop live backend (continuous pre-gen + 70+ word descriptions)
+// server.js — 323drop live backend (continuous pre-gen + 70+ word descriptions + locked image style)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -91,7 +91,7 @@ async function nextNewestPick() {
   }
 }
 
-/* ---------------- Prompt builder ---------------- */
+/* ---------------- Locked Image Style ---------------- */
 function stylizedPrompt(title, artist) {
   return [
     `create a high-impact cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
@@ -99,6 +99,8 @@ function stylizedPrompt(title, artist) {
     "make an original pop-idol-adjacent face and styling; do not replicate any real person or celebrity.",
     "absolutely no text, letters, numbers, logos, or watermarks.",
     "square 1:1 composition, clean crop; energetic but tasteful effects.",
+    // 🔒 locked style: always the same vibe
+    "style locked: stan-photocard with glossy k-pop photocard aesthetic."
   ].join(" ");
 }
 
@@ -207,6 +209,9 @@ app.get("/health", (_req, res) =>
 app.get("/api/stats", (_req, res) =>
   res.json({ count: imageCount })
 );
+
+// 🔒 root endpoint for Render health check
+app.get("/", (_req, res) => res.json({ ok: true }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
