@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + Pre-gen cache for /api/trend)
+// server.js — 323drop Live (AI Favorite Pick + First-call cache)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -27,7 +27,6 @@ const openai = new OpenAI({
 let imageCount = 0;
 let lastImgErr = null;
 let nextPickCache = null;
-let generatingNext = false;
 
 /* ---------------- Gen-Z fans style system ---------------- */
 const STYLE_PRESETS = {
@@ -43,8 +42,9 @@ const STYLE_PRESETS = {
       "original influencer look — not a specific or real celebrity face"
     ]
   },
-  // ... other styles unchanged ...
+  // other styles unchanged...
 };
+
 const DEFAULT_STYLE = process.env.DEFAULT_STYLE || "stan-photocard";
 
 /* ---------------- First-person description helper ---------------- */
@@ -68,9 +68,9 @@ function genderFromArtist(artist = "") {
 }
 function chooseVoice(artist = "") {
   const lower = artist.toLowerCase();
-  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer";
-  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";
-  return "alloy";
+  if (["ariana","sabrina","doja","rihanna","taylor"].some(n => lower.includes(n))) return "shimmer"; 
+  if (["bieber","tyler","kendrick","eminem","drake"].some(n => lower.includes(n))) return "verse";  
+  return "alloy"; 
 }
 function cleanForPrompt(str = "") {
   return str.replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "").trim();
@@ -132,41 +132,46 @@ async function generateImageUrl(prompt) {
   return null;
 }
 
-/* ---------------- Pre-generation cache ---------------- */
+/* ---------------- Pre-gen for first call only ---------------- */
 async function generateNextPick() {
-  if (generatingNext) return;
-  generatingNext = true;
   try {
     const pick = await nextNewestPick();
     const prompt = stylizedPrompt(pick.title, pick.artist);
     const imageUrl = await generateImageUrl(prompt);
     if (imageUrl) imageCount += 1;
-    nextPickCache = { ...pick, image: imageUrl, count: imageCount };
-  } finally {
-    generatingNext = false;
+    nextPickCache = {
+      title: pick.title,
+      artist: pick.artist,
+      description: pick.desc,
+      hashtags: pick.hashtags,
+      image: imageUrl,
+      count: imageCount
+    };
+  } catch {
+    nextPickCache = null;
   }
 }
 
-/* ---------------- Diagnostics ---------------- */
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
-app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
-app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
-
-/* ---------------- JSON one-shot with pre-gen ---------------- */
+/* ---------------- JSON one-shot with first-call cache ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
     let result;
     if (nextPickCache) {
       result = nextPickCache;
-      nextPickCache = null;
-      generateNextPick(); // start preparing next one
+      nextPickCache = null; // consume cache, never reused
     } else {
       const pick = await nextNewestPick();
       const prompt = stylizedPrompt(pick.title, pick.artist);
       const imageUrl = await generateImageUrl(prompt);
       if (imageUrl) imageCount += 1;
-      result = { ...pick, image: imageUrl, count: imageCount };
-      generateNextPick(); // prepare next
+      result = {
+        title: pick.title,
+        artist: pick.artist,
+        description: pick.desc,
+        hashtags: pick.hashtags,
+        image: imageUrl,
+        count: imageCount
+      };
     }
     res.json(result);
   } catch {
@@ -174,7 +179,7 @@ app.get("/api/trend", async (_req, res) => {
   }
 });
 
-/* ---------------- Voice (unchanged) ---------------- */
+/* ---------------- Voice (TTS) ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
@@ -192,9 +197,14 @@ app.get("/api/voice", async (req, res) => {
   }
 });
 
+/* ---------------- Diagnostics ---------------- */
+app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
+app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
+app.get("/api/stats", (_req,res) => res.json({ count: imageCount }));
+
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`323drop live backend on :${PORT}`);
-  generateNextPick(); // kick off pre-generation at startup
+  generateNextPick(); // pre-gen only once at startup
 });
