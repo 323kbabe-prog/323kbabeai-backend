@@ -1,4 +1,4 @@
-// server.js — multi-source song picker with persona bias
+// server.js — multi-source persona song picker with locked image style
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -29,7 +29,7 @@ function randomPersona() {
   return personas[Math.floor(Math.random() * personas.length)];
 }
 
-/* ---------------- Mock trending fetchers (replace with real APIs) ---------------- */
+/* ---------------- Mock trending fetchers (replace with real APIs later) ---------------- */
 async function fetchSpotifyTop() {
   return [
     { title: "Paint The Town Red", artist: "Doja Cat" },
@@ -126,6 +126,32 @@ async function makePersonaDescription(persona, title, artist) {
   return completion.choices[0].message.content || "";
 }
 
+/* ---------------- Image Generation (locked style: stan-photocard) ---------------- */
+async function generateImage(title, artist) {
+  const prompt = [
+    `create a high-impact cover image for the song "${title}" by ${artist}.`,
+    "audience: gen-z fan culture (fans). visual goal: stan-photocard idol photocard vibe.",
+    "make an original pop-idol-adjacent face and styling; do not replicate any real person or celebrity.",
+    "absolutely no text, letters, numbers, logos, or watermarks.",
+    "square 1:1 composition, glossy k-pop look, pastel gradient background, subtle film grain."
+  ].join(" ");
+
+  try {
+    const out = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024",
+      response_format: "b64_json"
+    });
+    const d = out?.data?.[0];
+    if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
+    if (d?.url) return d.url;
+  } catch (e) {
+    console.error("[image error]", e.message);
+  }
+  return null;
+}
+
 /* ---------------- API Endpoint ---------------- */
 app.get("/api/trend", async (_req, res) => {
   try {
@@ -133,13 +159,15 @@ app.get("/api/trend", async (_req, res) => {
     const songs = await fetchAllSongs();
     const pick = await pickSongWithPersona(persona, songs);
     const description = await makePersonaDescription(persona, pick.title, pick.artist);
+    const image = await generateImage(pick.title, pick.artist);
 
     res.json({
       title: pick.title,
       artist: pick.artist,
       persona,
       description,
-      hashtags: ["#nowplaying", "#fyp", "#stanvibes"]
+      hashtags: ["#nowplaying", "#fyp", "#stanvibes"],
+      image
     });
   } catch (e) {
     console.error("trend error", e);
@@ -148,7 +176,8 @@ app.get("/api/trend", async (_req, res) => {
       artist: "ai dj",
       persona: "neutral ai persona",
       description: "this is a fallback track when things break.",
-      hashtags: ["#ai"]
+      hashtags: ["#ai"],
+      image: null
     });
   }
 });
@@ -159,5 +188,5 @@ app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`multi-source song picker live on :${PORT}`);
+  console.log(`multi-source persona song picker live on :${PORT}`);
 });
