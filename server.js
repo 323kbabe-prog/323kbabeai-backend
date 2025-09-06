@@ -1,5 +1,5 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const API_BASE = "https://three23kbabeai-backend.onrender.com"; // replace if needed
+  const API_BASE = "https://three23kbabeai-backend.onrender.com"; 
   const voicePlayer = new Audio();
 
   const t=document.getElementById("r-title"),
@@ -14,34 +14,62 @@ document.addEventListener("DOMContentLoaded", () => {
         overlay=document.getElementById("loading-overlay");
 
   function ts(){return new Date().toLocaleTimeString([], {hour12:false});}
-  function line(msg){const p=document.createElement("p");p.innerHTML=`<span>[${ts()}]</span> ${msg}`;logEl.appendChild(p);logEl.scrollTop=logEl.scrollHeight;}
-  function info(m){line(m);}function ok(m){line(m);}function err(m){line(m);}
+  function line(msg){
+    const p=document.createElement("p");
+    p.innerHTML=`<span>[${ts()}]</span> ${msg}`;
+    logEl.appendChild(p);
+    logEl.scrollTop=logEl.scrollHeight;
+  }
+  function info(m){line(m);}
+  function ok(m){line(m);}
+  function err(m){line(m);}
+
+  // 🎭 Persona pool
+  const personas = [
+    "17-year-old black male hip-hop fan in atlanta",
+    "22-year-old korean female k-pop stan in seoul",
+    "30-year-old latino reggaeton fan in los angeles",
+    "40-year-old white indie-rock dad in chicago",
+    "19-year-old indian edm raver in mumbai",
+    "25-year-old japanese anime-pop fan in tokyo",
+    "28-year-old african female afrobeats lover in lagos"
+  ];
+
+  function randomPersona(){
+    return personas[Math.floor(Math.random()*personas.length)];
+  }
 
   async function loadTrend(){
     try{
-      info("📡👀💫 323kbabe scanning vibes rn 🎶✨🌈🦄🔥");
+      const persona = randomPersona();
+      info(`🎭✨ new drop as ${persona} 🌍🎶🔥`);
 
+      // show overlay
       overlay.style.display = "flex";
       setTimeout(()=>overlay.style.opacity="1", 10);
 
       const r=await fetch(`${API_BASE}/api/trend?style=stan-photocard`,{cache:"no-store"});
       const j=await r.json();
 
-      t.textContent=j.title?.toLowerCase()||"untitled";
-      a.textContent=j.artist?.toLowerCase()||"unknown";
-      d.textContent=j.description?.toLowerCase()||"";
-      g.innerHTML=(j.hashtags||[]).slice(0,3).map(x=>`<span class="badge">${String(x).toLowerCase()}</span>`).join("");
+      // Wrap song output in emoji
+      t.textContent = `🎶✨🌈 ${j.title?.toLowerCase()||"untitled"} 💿🔥💖`;
+      a.textContent = `👩‍🎤💎 ${j.artist?.toLowerCase()||"unknown"} 🌸🎤✨`;
+      d.textContent = `💖🔥🦋 persona: ${persona} says → ${j.description?.toLowerCase()||""} 🌍✨🎶💅`;
+
+      g.innerHTML=(j.hashtags||[]).slice(0,3).map(x=>
+        `<span class="badge">✨${String(x).toLowerCase()}🔥</span>`).join("");
+
       if(typeof j.count==="number")c.textContent="images dropped: "+j.count;
       if(j.image){
         img.src=j.image; img.style.display="block"; fb.style.display="none";
-        ok("🌈✨🦋🔥🖼️💿 image ready babe 💅💖🌸🌍");
+        ok("🌈🦋🔥 image ready for this vibe 💅💖🌸");
       } else {
         img.style.display="none"; fb.style.display="block";
       }
-      if(j.description)playVoice(j.description, j.artist);
+      if(j.description) playVoice(j.description, j.artist);
 
     }catch(e){
-      err("💔⚠️🚨😵❌ fetch flopped… retry soon 😭🔥🪐");
+      err("💔⚠️ fetch flopped… retry soon 😭🔥");
     }finally{
       overlay.style.opacity = "0";
       setTimeout(()=>overlay.style.display="none", 300);
@@ -54,19 +82,19 @@ document.addEventListener("DOMContentLoaded", () => {
       const url=`${API_BASE}/api/voice?text=${encodeURIComponent(text)}&artist=${encodeURIComponent(artist||"")}`;
       voicePlayer.src=url;
       await voicePlayer.play();
-      ok("🎤🎶💖🔊✨ sweet ai voice on air 💅🌸🔥");
+      ok("🎤🎶💖 voice on air ✨🔥");
       voicePlayer.onended=()=>{
         voiceStatus.textContent="";
         setTimeout(loadTrend, 3000);
       };
     }catch(e){
-      err("🔇😢💔😭💤 voice broke… silence vibes rn 😔✨");
+      err("🔇😭 voice broke… silence vibes rn");
       voiceStatus.textContent="";
       setTimeout(loadTrend, 3000);
     }
   }
 
-  // ✅ attach start button after DOM is ready
+  // 🔊 Start button
   document.getElementById("start-btn").addEventListener("click",()=>{
     document.getElementById("start-screen").style.display="none";
     document.getElementById("app").style.display="block";
