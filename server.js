@@ -1,104 +1,216 @@
-document.addEventListener("DOMContentLoaded", () => {
-  const API_BASE = "https://three23kbabeai-backend.onrender.com"; 
-  const voicePlayer = new Audio();
+// server.js — 323drop live backend (continuous pre-gen + 70+ word descriptions)
+// Node >= 20, CommonJS
 
-  const t=document.getElementById("r-title"),
-        a=document.getElementById("r-artist"),
-        d=document.getElementById("r-desc"),
-        g=document.getElementById("r-tags"),
-        c=document.getElementById("r-count"),
-        img=document.getElementById("r-img"),
-        fb=document.getElementById("r-fallback"),
-        voiceStatus=document.getElementById("voice-status"),
-        logEl=document.getElementById("log"),
-        overlay=document.getElementById("loading-overlay");
+const express = require("express");
+const cors = require("cors");
+const OpenAI = require("openai");
 
-  function ts(){return new Date().toLocaleTimeString([], {hour12:false});}
-  function line(msg){
-    const p=document.createElement("p");
-    p.innerHTML=`<span>[${ts()}]</span> ${msg}`;
-    logEl.appendChild(p);
-    logEl.scrollTop=logEl.scrollHeight;
-  }
-  function info(m){line(m);}
-  function ok(m){line(m);}
-  function err(m){line(m);}
+const app = express();
 
-  // 🎭 Persona pool
-  const personas = [
-    "17-year-old black male hip-hop fan in atlanta",
-    "22-year-old korean female k-pop stan in seoul",
-    "30-year-old latino reggaeton fan in los angeles",
-    "40-year-old white indie-rock dad in chicago",
-    "19-year-old indian edm raver in mumbai",
-    "25-year-old japanese anime-pop fan in tokyo",
-    "28-year-old african female afrobeats lover in lagos"
+/* ---------------- CORS ---------------- */
+const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
+app.use(
+  cors({
+    origin: (origin, cb) =>
+      !origin || ALLOW.includes(origin)
+        ? cb(null, true)
+        : cb(new Error("CORS: origin not allowed")),
+    methods: ["GET", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+    maxAge: 86400,
+  })
+);
+
+/* ---------------- OpenAI ---------------- */
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  ...(process.env.OPENAI_ORG_ID
+    ? { organization: process.env.OPENAI_ORG_ID }
+    : {}),
+});
+
+/* ---------------- State ---------------- */
+let imageCount = 0;
+let lastImgErr = null;
+let nextPickCache = null;
+let generatingNext = false;
+
+/* ---------------- Helpers ---------------- */
+function makeFirstPersonDescription(title, artist) {
+  const options = [
+    `i just played “${title}” by ${artist} and it hit me instantly — the vibe is unreal. the melody sticks in my head like glue, and i can feel the energy pulsing through every beat. the way the vocals flow on top of the rhythm makes the track feel like it was built for endless replays. it has this wild, unstoppable energy that makes me want to move, share it with friends, and relive the moment again and again until it becomes the anthem of my week.`,
+    `when “${title}” comes on, i can’t help but stop scrolling and let it run, because ${artist} really caught a wave with this one. there’s something addictive about the rhythm, the way it shifts between intensity and flow, keeping me locked in every second. it feels like the perfect mix of confidence and emotion, striking that balance between boldness and vulnerability. the more i listen, the more i realize it’s one of those tracks that feels personal, yet universal, and it sticks in my head like a soundtrack i didn’t know i needed.`,
+    `i’ve had “${title}” by ${artist} stuck in my head all day, and it’s not leaving anytime soon. the vocals wrap around me like a conversation with a close friend, pulling me deeper with every line, while the beat feels alive, almost breathing. every time the chorus hits, i get goosebumps, like i’m standing in the middle of a crowd shouting it back word for word. it’s one of those rare tracks that takes over the room and changes the atmosphere completely, leaving me wanting to hit repeat no matter what i’m doing.`,
+    `listening to “${title}” makes me feel like i’m in on the trend before it blows up, and that’s the exact magic ${artist} nailed here. the sound is sharp, bold, and fearless, but underneath it all there’s this softness that makes it feel deeply personal. it’s the kind of song that hits like a wave — powerful, quick, and unforgettable — but also lingers long after it ends. i can see it becoming a viral anthem, the kind of track that lives in everyone’s feed, yet still feels like it was made just for me.`,
+    `every time i hear “${title}” by ${artist}, i get that rush that only a viral track can bring, where the energy instantly changes the entire space around me. the production is electric, the kind of sound that fills a room and makes it brighter, louder, and impossible to ignore. it feels less like just a song and more like a cultural moment, a movement that i want to carry with me everywhere i go. with each replay, the vibe only grows stronger, embedding itself deeper, and i can’t imagine my playlist without it now.`,
   ];
+  return options[Math.floor(Math.random() * options.length)];
+}
 
-  function randomPersona(){
-    return personas[Math.floor(Math.random()*personas.length)];
+function cleanForPrompt(str = "") {
+  return str
+    .replace(/(kill|suicide|murder|die|sex|naked|porn|gun|weapon)/gi, "")
+    .trim();
+}
+
+/* ---------------- AI Song Pick ---------------- */
+async function nextNewestPick() {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "you are a music trend parser." },
+        {
+          role: "user",
+          content:
+            "pick ONE current trending song (spotify or tiktok). reply ONLY as json { \"title\": \"...\", \"artist\": \"...\" }.",
+        },
+      ],
+    });
+
+    const text = completion.choices[0].message.content || "{}";
+    let pick;
+    try {
+      pick = JSON.parse(text);
+    } catch {
+      pick = { title: "unknown", artist: "unknown" };
+    }
+    return {
+      title: pick.title || "unknown",
+      artist: pick.artist || "unknown",
+      description: makeFirstPersonDescription(pick.title, pick.artist),
+      hashtags: ["#nowplaying", "#aifavorite"],
+    };
+  } catch {
+    return {
+      title: "fallback song",
+      artist: "ai dj",
+      description: "i just played this fallback track and it’s still a vibe.",
+      hashtags: ["#ai"],
+    };
   }
+}
 
-  async function loadTrend(){
-    try{
-      const persona = randomPersona();
-      info(`🎭✨ new drop as ${persona} 🌍🎶🔥`);
+/* ---------------- Prompt builder ---------------- */
+function stylizedPrompt(title, artist) {
+  return [
+    `create a high-impact cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
+    "audience: gen-z fan culture (fans).",
+    "make an original pop-idol-adjacent face and styling; do not replicate any real person or celebrity.",
+    "absolutely no text, letters, numbers, logos, or watermarks.",
+    "square 1:1 composition, clean crop; energetic but tasteful effects.",
+  ].join(" ");
+}
 
-      // show overlay
-      overlay.style.display = "flex";
-      setTimeout(()=>overlay.style.opacity="1", 10);
-
-      const r=await fetch(`${API_BASE}/api/trend?style=stan-photocard`,{cache:"no-store"});
-      const j=await r.json();
-
-      // Wrap song output in emoji
-      t.textContent = `🎶✨🌈 ${j.title?.toLowerCase()||"untitled"} 💿🔥💖`;
-      a.textContent = `👩‍🎤💎 ${j.artist?.toLowerCase()||"unknown"} 🌸🎤✨`;
-      d.textContent = `💖🔥🦋 persona: ${persona} says → ${j.description?.toLowerCase()||""} 🌍✨🎶💅`;
-
-      g.innerHTML=(j.hashtags||[]).slice(0,3).map(x=>
-        `<span class="badge">✨${String(x).toLowerCase()}🔥</span>`).join("");
-
-      if(typeof j.count==="number")c.textContent="images dropped: "+j.count;
-      if(j.image){
-        img.src=j.image; img.style.display="block"; fb.style.display="none";
-        ok("🌈🦋🔥 image ready for this vibe 💅💖🌸");
-      } else {
-        img.style.display="none"; fb.style.display="block";
-      }
-      if(j.description) playVoice(j.description, j.artist);
-
-    }catch(e){
-      err("💔⚠️ fetch flopped… retry soon 😭🔥");
-    }finally{
-      overlay.style.opacity = "0";
-      setTimeout(()=>overlay.style.display="none", 300);
+/* ---------------- Image generation ---------------- */
+async function generateImageUrl(prompt) {
+  const models = ["gpt-image-1", "dall-e-3"];
+  for (const model of models) {
+    try {
+      const out = await openai.images.generate({
+        model,
+        prompt,
+        size: "1024x1024",
+        response_format: "b64_json",
+      });
+      const d = out?.data?.[0];
+      const b64 = d?.b64_json;
+      const url = d?.url;
+      if (b64) return `data:image/png;base64,${b64}`;
+      if (url) return url;
+    } catch (e) {
+      lastImgErr = { model, message: e?.message || String(e) };
     }
   }
+  return null;
+}
 
-  async function playVoice(text, artist){
-    try{
-      voiceStatus.textContent="🎤🔊✨ ai voice loading…";
-      const url=`${API_BASE}/api/voice?text=${encodeURIComponent(text)}&artist=${encodeURIComponent(artist||"")}`;
-      voicePlayer.src=url;
-      await voicePlayer.play();
-      ok("🎤🎶💖 voice on air ✨🔥");
-      voicePlayer.onended=()=>{
-        voiceStatus.textContent="";
-        setTimeout(loadTrend, 3000);
+/* ---------------- Continuous pre-gen ---------------- */
+async function generateNextPick() {
+  if (generatingNext) return;
+  generatingNext = true;
+  try {
+    const pick = await nextNewestPick();
+    const prompt = stylizedPrompt(pick.title, pick.artist);
+    const imageUrl = await generateImageUrl(prompt);
+    if (imageUrl) imageCount += 1;
+    nextPickCache = {
+      title: pick.title,
+      artist: pick.artist,
+      description: pick.description,
+      hashtags: pick.hashtags,
+      image: imageUrl,
+      count: imageCount,
+    };
+  } finally {
+    generatingNext = false;
+  }
+}
+
+/* ---------------- Endpoints ---------------- */
+app.get("/api/trend", async (_req, res) => {
+  try {
+    let result;
+    if (nextPickCache) {
+      result = nextPickCache;
+      nextPickCache = null;
+      generateNextPick(); // prepare next one
+    } else {
+      const pick = await nextNewestPick();
+      const prompt = stylizedPrompt(pick.title, pick.artist);
+      const imageUrl = await generateImageUrl(prompt);
+      if (imageUrl) imageCount += 1;
+      result = {
+        title: pick.title,
+        artist: pick.artist,
+        description: pick.description,
+        hashtags: pick.hashtags,
+        image: imageUrl,
+        count: imageCount,
       };
-    }catch(e){
-      err("🔇😭 voice broke… silence vibes rn");
-      voiceStatus.textContent="";
-      setTimeout(loadTrend, 3000);
+      generateNextPick();
     }
+    res.json(result);
+  } catch {
+    res.json({
+      title: "fresh drop",
+      artist: "323kbabeai",
+      description: "text-only.",
+      hashtags: ["#music", "#trend"],
+      image: null,
+      count: imageCount,
+    });
   }
+});
 
-  // 🔊 Start button
-  document.getElementById("start-btn").addEventListener("click",()=>{
-    document.getElementById("start-screen").style.display="none";
-    document.getElementById("app").style.display="block";
-    loadTrend();
-    overlay.style.pointerEvents="auto";
-  });
+app.get("/api/voice", async (req, res) => {
+  try {
+    const text = req.query.text || "";
+    if (!text) return res.status(400).json({ error: "missing text" });
+    const out = await openai.audio.speech.create({
+      model: "gpt-4o-mini-tts",
+      voice: "alloy",
+      input: text,
+    });
+    const buffer = Buffer.from(await out.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(buffer);
+  } catch {
+    res.status(500).json({ error: "tts failed" });
+  }
+});
+
+app.get("/diag/images", (_req, res) => res.json({ lastImgErr }));
+app.get("/health", (_req, res) =>
+  res.json({ ok: true, time: Date.now() })
+);
+app.get("/api/stats", (_req, res) =>
+  res.json({ count: imageCount })
+);
+
+/* ---------------- Start ---------------- */
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`323drop live backend on :${PORT}`);
+  generateNextPick();
 });
