@@ -1,4 +1,4 @@
-// server.js — 323drop Live (AI Favorite Pick + First-call cache)
+// server.js — 323drop Live (AI Favorite Pick + First-call cache + description fix)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -92,11 +92,11 @@ async function nextNewestPick() {
     return {
       title: pick.title || "Unknown",
       artist: pick.artist || "Unknown",
-      desc: makeFirstPersonDescription(pick.title, pick.artist),
+      description: makeFirstPersonDescription(pick.title, pick.artist), // ✅ always "description"
       hashtags: ["#NowPlaying", "#AIFavorite"]
     };
   } catch {
-    return { title: "Fallback Song", artist: "AI DJ", desc: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
+    return { title: "Fallback Song", artist: "AI DJ", description: "I just played this fallback track and it's still a vibe.", hashtags: ["#AI"] };
   }
 }
 
@@ -142,7 +142,7 @@ async function generateNextPick() {
     nextPickCache = {
       title: pick.title,
       artist: pick.artist,
-      description: pick.desc,
+      description: pick.description,   // ✅ unified key
       hashtags: pick.hashtags,
       image: imageUrl,
       count: imageCount
@@ -167,7 +167,7 @@ app.get("/api/trend", async (_req, res) => {
       result = {
         title: pick.title,
         artist: pick.artist,
-        description: pick.desc,
+        description: pick.description,   // ✅ unified key
         hashtags: pick.hashtags,
         image: imageUrl,
         count: imageCount
