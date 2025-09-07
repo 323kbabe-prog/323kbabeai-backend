@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Random Voice + Random Mixed Image)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Random Voice + Random Mixed Image + Stable Trend)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -189,6 +189,7 @@ async function generateNextPick() {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
+    // Always wait for a full generation if no cache is ready
     if (!nextPickCache) {
       await generateNextPick();
     }
