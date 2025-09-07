@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen + OpenAI description/images + Google TTS voice + Failsafe + Test endpoint)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS: Google first, fallback to OpenAI)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -20,11 +20,9 @@ app.use(cors({
 /* ---------------- OpenAI ---------------- */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  ...(process.env.OPENAI_ORG_ID ? { organization: process.env.OPENAI_ORG_ID } : {}),
 });
 
 /* ---------------- Google TTS ---------------- */
-// ✅ No hardcoded path. Uses GOOGLE_APPLICATION_CREDENTIALS env var.
 const googleTTSClient = new textToSpeech.TextToSpeechClient();
 
 async function googleTTS(text, style = "female") {
@@ -41,9 +39,8 @@ async function googleTTS(text, style = "female") {
       audioConfig: { audioEncoding: "MP3" }
     });
 
-    // 🔎 Debug: log if audio is missing
     if (!response.audioContent) {
-      console.error("❌ Google TTS returned no audio. Check credentials & billing.");
+      console.error("❌ Google TTS returned no audio");
       return null;
     }
 
@@ -55,26 +52,49 @@ async function googleTTS(text, style = "female") {
   }
 }
 
+/* ---------------- OpenAI fallback TTS ---------------- */
+async function openaiTTS(text, gender = "neutral") {
+  try {
+    const voiceMap = {
+      female: "shimmer",
+      male: "verse",
+      neutral: "alloy",
+      mixed: "alloy"
+    };
+    const out = await openai.audio.speech.create({
+      model: "gpt-4o-mini-tts",
+      voice: voiceMap[gender] || "alloy",
+      input: text,
+    });
+    return Buffer.from(await out.arrayBuffer());
+  } catch (e) {
+    console.error("❌ OpenAI TTS error:", e.message);
+    return null;
+  }
+}
+
 /* ---------------- State ---------------- */
 let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 ---------------- */
+/* ---------------- Spotify Top 50 (short sample shown; replace with your full 50) ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
-  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  // … include full 50 here …
+  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami", gender: "mixed" },
+  { title: "Soda Pop", artist: "Saja Boys", gender: "male" },
+  { title: "DAISIES", artist: "Justin Bieber", gender: "male" },
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
 /* ---------------- Helpers ---------------- */
 async function makeFirstPersonDescription(title, artist) {
   try {
+    console.log("📝 Generating description for:", title, "by", artist);
     const prompt = `
       Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
-      Mimic the artist’s personality, mood, and style.
-      Make it natural, Gen-Z relatable, and as if the artist themselves is talking.
+      Mimic the artist’s mood and style (e.g., Billie Eilish = moody, Eminem = intense, Taylor Swift = storytelling).
+      Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
     `;
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -87,7 +107,7 @@ async function makeFirstPersonDescription(title, artist) {
     return completion.choices[0].message.content.trim();
   } catch (e) {
     console.error("❌ Description failed:", e.message);
-    return `“${title}” by ${artist} is unforgettable, replay-worthy, and instantly addictive.`;
+    return `“${title}” by ${artist} is unforgettable, replay-worthy, and addictive.`;
   }
 }
 
@@ -107,17 +127,16 @@ function stylizedPrompt(title, artist, gender) {
     "No text, logos, or watermarks.",
     "Square 1:1 composition.",
     `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`,
-    "• flash-lit glossy skin with subtle K-beauty glow",
-    "• pastel gradient background (milk pink, baby blue, lilac) with haze",
-    "• sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
-    "• tiny glitter bokeh and lens glints",
-    "• clean studio sweep look; subtle film grain"
+    "• pastel gradient background (milk pink, baby blue, lilac)",
+    "• glitter bokeh and lens glints",
+    "• flash-lit glossy skin with subtle K-beauty glow"
   ].join(" ");
 }
 
 /* ---------------- Image generation ---------------- */
 async function generateImageUrl(prompt) {
   try {
+    console.log("🎨 Generating image…");
     const out = await openai.images.generate({
       model: "gpt-image-1",
       prompt,
@@ -141,11 +160,13 @@ async function generateNextPick(style = "female") {
     const pick = pickSongAlgorithm();
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
     const imageUrl = await generateImageUrl(stylizedPrompt(pick.title, pick.artist, pick.gender));
+
+    // Voice (Google first, OpenAI fallback)
     let voiceBase64 = null;
-    try {
-      const audioBuffer = await googleTTS(description, style);
-      if (audioBuffer) voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
-    } catch {}
+    let audioBuffer = await googleTTS(description, style);
+    if (!audioBuffer) audioBuffer = await openaiTTS(description, pick.gender);
+    if (audioBuffer) voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
+
     nextPickCache = {
       title: pick.title,
       artist: pick.artist,
@@ -175,18 +196,6 @@ app.get("/api/trend", async (req, res) => {
       nextPickCache = null;
       generateNextPick(req.query.style || "female");
     }
-    if (!result) {
-      result = {
-        title: "Fallback Song",
-        artist: "Unknown",
-        gender: "neutral",
-        description: "This is a fallback drop while the system retries.",
-        hashtags: ["#NowPlaying"],
-        image: "https://placehold.co/600x600?text=No+Image",
-        voice: null,
-        refresh: null
-      };
-    }
     res.json(result);
   } catch (e) {
     console.error("❌ Trend API error:", e);
@@ -203,36 +212,20 @@ app.get("/api/trend", async (req, res) => {
   }
 });
 
-app.get("/api/voice", async (req, res) => {
-  try {
-    const text = req.query.text || "";
-    const style = req.query.style || "female";
-    if (!text) return res.status(400).json({ error: "Missing text" });
-    const audioBuffer = await googleTTS(text, style);
-    if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(audioBuffer);
-  } catch (e) {
-    res.status(500).json({ error: "Voice TTS failed" });
-  }
-});
-
-/* ---------------- Test Google TTS ---------------- */
 app.get("/api/test-google", async (req, res) => {
   try {
     const text = "Google TTS is working. Hello from 323drop!";
     const style = req.query.style || "female";
-    const audioBuffer = await googleTTS(text, style);
+    let audioBuffer = await googleTTS(text, style);
+    if (!audioBuffer) audioBuffer = await openaiTTS(text, "neutral");
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
   } catch (e) {
-    console.error("❌ Test TTS failed:", e.message);
     res.status(500).json({ error: "Test TTS failed" });
   }
 });
 
-app.get("/diag/images", (_req,res) => res.json({ lastImgErr }));
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 
 /* ---------------- Start ---------------- */
