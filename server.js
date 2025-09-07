@@ -72,6 +72,9 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
+// ✅ Track last mixed gender for alternation
+let lastMixedGender = "female";
+
 /* ---------------- Spotify Top 50 ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
@@ -112,9 +115,11 @@ function pickSongAlgorithm() {
   return pool[idx];
 }
 
+// ✅ Alternate mixed gender instead of random
 function resolveImageGender(gender) {
   if (gender === "mixed") {
-    return Math.random() < 0.5 ? "male" : "female";
+    lastMixedGender = lastMixedGender === "female" ? "male" : "female";
+    return lastMixedGender;
   }
   return gender;
 }
@@ -189,6 +194,7 @@ async function generateNextPick() {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
+    // ✅ Ensure first drop waits until ready
     if (!nextPickCache) {
       console.log("⏳ First drop generating…");
       await generateNextPick();
@@ -197,7 +203,8 @@ app.get("/api/trend", async (req, res) => {
     const result = nextPickCache;
     nextPickCache = null;
 
-    generateNextPick(); // pre-gen next in background
+    // Pre-generate next in background
+    generateNextPick();
 
     res.json(result);
   } catch (e) {
@@ -245,5 +252,6 @@ app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
   console.log(`323drop live backend on :${PORT}`);
-  await generateNextPick(); // ✅ Pre-warm first drop
+  // ✅ Pre-warm first drop so first request never fails
+  await generateNextPick();
 });
