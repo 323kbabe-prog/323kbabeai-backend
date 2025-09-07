@@ -72,9 +72,6 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-// ✅ Track last mixed gender for alternation
-let lastMixedGender = "female";
-
 /* ---------------- Spotify Top 50 ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
@@ -92,6 +89,8 @@ async function makeFirstPersonDescription(title, artist) {
     const prompt = `
       Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
       Mimic the artist’s mood and style. Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
+      Add a slightly different perspective or vibe each time so no two outputs are identical.
+      Current time: ${new Date().toISOString()}.
     `;
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini", temperature: 0.9,
@@ -115,11 +114,10 @@ function pickSongAlgorithm() {
   return pool[idx];
 }
 
-// ✅ Alternate mixed gender instead of random
+// ✅ Bias male when mixed
 function resolveImageGender(gender) {
   if (gender === "mixed") {
-    lastMixedGender = lastMixedGender === "female" ? "male" : "female";
-    return lastMixedGender;
+    return Math.random() < 0.7 ? "male" : "female"; // 70% male bias
   }
   return gender;
 }
@@ -203,7 +201,6 @@ app.get("/api/trend", async (req, res) => {
       await generateNextPick();
     }
 
-    // ✅ Always return something safe
     const result = nextPickCache || {
       title: "Loading Song",
       artist: "System",
@@ -265,6 +262,5 @@ app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
   console.log(`323drop live backend on :${PORT}`);
-  // ✅ Pre-warm first drop so first request never fails
-  await generateNextPick();
+  await generateNextPick(); // ✅ Pre-warm first drop
 });
