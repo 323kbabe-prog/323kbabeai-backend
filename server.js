@@ -26,22 +26,12 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 /* ---------------- Google TTS ---------------- */
 const googleTTSClient = new textToSpeech.TextToSpeechClient();
 
-const femaleVoices = [
-  { languageCode: "en-US", name: "en-US-Neural2-C", ssmlGender: "FEMALE" },
-  { languageCode: "en-US", name: "en-US-Neural2-E", ssmlGender: "FEMALE" },
-  { languageCode: "en-US", name: "en-US-Neural2-F", ssmlGender: "FEMALE" },
-  { languageCode: "en-US", name: "en-US-Neural2-H", ssmlGender: "FEMALE" }
-];
-const maleVoices = [
-  { languageCode: "en-US", name: "en-US-Neural2-B", ssmlGender: "MALE" },
-  { languageCode: "en-US", name: "en-US-Neural2-D", ssmlGender: "MALE" },
-  { languageCode: "en-US", name: "en-US-Neural2-G", ssmlGender: "MALE" },
-  { languageCode: "en-US", name: "en-US-Neural2-I", ssmlGender: "MALE" }
-];
-
-function pickRandomVoiceByGender(gender) {
-  if (gender === "male") return maleVoices[Math.floor(Math.random() * maleVoices.length)];
-  return femaleVoices[Math.floor(Math.random() * femaleVoices.length)];
+// ✅ Locked Gen-Z voices
+function pickVoiceByGender(gender) {
+  if (gender === "male") {
+    return { languageCode: "en-US", name: "en-US-Neural2-D", ssmlGender: "MALE" }; // young male
+  }
+  return { languageCode: "en-US", name: "en-US-Neural2-C", ssmlGender: "FEMALE" }; // young female
 }
 
 async function googleTTS(text, voiceChoice) {
@@ -178,7 +168,7 @@ async function generateNextPick() {
     let voiceBase64 = null;
     let audioBuffer = null;
 
-    const voiceChoice = pickRandomVoiceByGender(resolvedGender);
+    const voiceChoice = pickVoiceByGender(resolvedGender);
     audioBuffer = await googleTTS(description, voiceChoice);
     if (!audioBuffer) audioBuffer = await openaiTTS(description, resolvedGender);
 
@@ -199,7 +189,6 @@ async function generateNextPick() {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
-    // ✅ Ensure first drop waits until ready
     if (!nextPickCache) {
       console.log("⏳ First drop generating…");
       await generateNextPick();
@@ -208,8 +197,7 @@ app.get("/api/trend", async (req, res) => {
     const result = nextPickCache;
     nextPickCache = null;
 
-    // Pre-generate next in background
-    generateNextPick();
+    generateNextPick(); // pre-gen next in background
 
     res.json(result);
   } catch (e) {
@@ -229,15 +217,7 @@ app.get("/api/voice", async (req, res) => {
     const artist = req.query.artist || "neutral";
     if (!text) return res.status(400).json({ error: "Missing text" });
 
-    if (nextPickCache && nextPickCache.voice) {
-      console.log("♻️ Reusing cached voice");
-      const base64 = nextPickCache.voice.split(",")[1];
-      const buffer = Buffer.from(base64, "base64");
-      res.setHeader("Content-Type", "audio/mpeg");
-      return res.send(buffer);
-    }
-
-    const voiceChoice = pickRandomVoiceByGender("female");
+    const voiceChoice = pickVoiceByGender("female");
     let audioBuffer = await googleTTS(text, voiceChoice);
     if (!audioBuffer) audioBuffer = await openaiTTS(text, artist);
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
@@ -250,7 +230,7 @@ app.get("/api/test-google", async (req, res) => {
   try {
     const text = "Google TTS is working. Hello from 323drop!";
     const style = req.query.style || "female";
-    const voiceChoice = pickRandomVoiceByGender(style);
+    const voiceChoice = pickVoiceByGender(style);
     let audioBuffer = await googleTTS(text, voiceChoice);
     if (!audioBuffer) audioBuffer = await openaiTTS(text, "neutral");
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
@@ -265,6 +245,5 @@ app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
   console.log(`323drop live backend on :${PORT}`);
-  // ✅ Pre-warm first drop so first request never fails
-  await generateNextPick();
+  await generateNextPick(); // ✅ Pre-warm first drop
 });
