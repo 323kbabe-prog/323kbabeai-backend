@@ -203,9 +203,19 @@ app.get("/api/trend", async (req, res) => {
       await generateNextPick();
     }
 
-    const result = nextPickCache;
-    nextPickCache = null;
+    // ✅ Always return something safe
+    const result = nextPickCache || {
+      title: "Loading Song",
+      artist: "System",
+      gender: "neutral",
+      description: "AI is warming up… please wait.",
+      hashtags: ["#NowPlaying"],
+      image: "https://placehold.co/600x600?text=Loading",
+      voice: null,
+      refresh: 5000
+    };
 
+    nextPickCache = null;
     generateNextPick(); // pre-gen next in background
 
     res.json(result);
@@ -214,8 +224,9 @@ app.get("/api/trend", async (req, res) => {
     res.json({
       title: "Error Song", artist: "System", gender: "neutral",
       description: "Something went wrong. Retrying soon…",
-      hashtags: ["#Error"], image: "https://placehold.co/600x600?text=Error",
-      voice: null, refresh: null
+      hashtags: ["#Error"],
+      image: "https://placehold.co/600x600?text=Error",
+      voice: null, refresh: 5000
     });
   }
 });
