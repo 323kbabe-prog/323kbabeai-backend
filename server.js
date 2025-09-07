@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS: Google first, fallback to OpenAI)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Debug logs)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -66,6 +66,7 @@ async function openaiTTS(text, gender = "neutral") {
       voice: voiceMap[gender] || "alloy",
       input: text,
     });
+    console.log("✅ OpenAI TTS generated audio");
     return Buffer.from(await out.arrayBuffer());
   } catch (e) {
     console.error("❌ OpenAI TTS error:", e.message);
@@ -78,7 +79,7 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 USA (Sept 2025, with gender) ---------------- */
+/* ---------------- Spotify Top 50 (full list here) ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
@@ -187,8 +188,15 @@ async function generateImageUrl(prompt) {
       size: "1024x1024"
     });
     const d = out?.data?.[0];
-    if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
-    if (d?.url) return d.url;
+    if (d?.b64_json) {
+      console.log("🎨 Got image (base64).");
+      return `data:image/png;base64,${d.b64_json}`;
+    }
+    if (d?.url) {
+      console.log("🎨 Got image (url).");
+      return d.url;
+    }
+    console.log("⚠️ Image generation returned empty.");
   } catch (e) {
     lastImgErr = { message: e?.message || String(e) };
     console.error("❌ Image gen error:", lastImgErr);
@@ -209,7 +217,12 @@ async function generateNextPick(style = "female") {
     let voiceBase64 = null;
     let audioBuffer = await googleTTS(description, style);
     if (!audioBuffer) audioBuffer = await openaiTTS(description, pick.gender);
-    if (audioBuffer) voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
+    if (audioBuffer) {
+      console.log("✅ Voice generated (bytes:", audioBuffer.length, ")");
+      voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
+    } else {
+      console.log("⚠️ No voice generated for this drop.");
+    }
 
     nextPickCache = {
       title: pick.title,
