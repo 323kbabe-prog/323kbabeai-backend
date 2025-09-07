@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Random Voice + Random Mixed Image + Stable Trend)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Random Voice + Stable Trend)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -84,7 +84,7 @@ const TOP50_USA = [
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
   { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
   { title: "Soda Pop", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  // ... include the rest of your Top 50 here ...
+  // ... rest of Top 50 ...
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -118,7 +118,7 @@ function pickSongAlgorithm() {
   return pool[idx];
 }
 
-// Resolve gender for image gen: mixed randomly → male or female
+// Resolve gender for both image + voice
 function resolveImageGender(gender) {
   if (gender === "mixed") {
     return Math.random() < 0.5 ? "male" : "female";
@@ -166,19 +166,23 @@ async function generateNextPick() {
   try {
     const pick = pickSongAlgorithm();
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
-    const imageUrl = await generateImageUrl(pick.gender);
+
+    // ✅ Resolve gender ONCE for both image + voice
+    const resolvedGender = resolveImageGender(pick.gender);
+
+    const imageUrl = await generateImageUrl(resolvedGender);
 
     let voiceBase64 = null;
-    const voiceChoice = pickRandomVoiceByGender(pick.gender);
+    const voiceChoice = pickRandomVoiceByGender(resolvedGender);
     let audioBuffer = await googleTTS(description, voiceChoice);
-    if (!audioBuffer) audioBuffer = await openaiTTS(description, pick.gender);
+    if (!audioBuffer) audioBuffer = await openaiTTS(description, resolvedGender);
     if (audioBuffer) {
       console.log("✅ Voice generated (bytes:", audioBuffer.length, ")");
       voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
     }
 
     nextPickCache = {
-      title: pick.title, artist: pick.artist, gender: pick.gender,
+      title: pick.title, artist: pick.artist, gender: resolvedGender,
       description, hashtags: ["#NowPlaying", "#AIFavorite"],
       image: imageUrl, voice: voiceBase64,
       refresh: voiceBase64 ? 3000 : null
@@ -189,7 +193,6 @@ async function generateNextPick() {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
-    // Always wait for a full generation if no cache is ready
     if (!nextPickCache) {
       await generateNextPick();
     }
