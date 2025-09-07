@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Random Voice + Stable Trend)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Stable Trend)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -26,7 +26,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 /* ---------------- Google TTS ---------------- */
 const googleTTSClient = new textToSpeech.TextToSpeechClient();
 
-// Pools of voices by gender
 const femaleVoices = [
   { languageCode: "en-US", name: "en-US-Neural2-C", ssmlGender: "FEMALE" },
   { languageCode: "en-US", name: "en-US-Neural2-E", ssmlGender: "FEMALE" },
@@ -64,13 +63,18 @@ async function googleTTS(text, voiceChoice) {
 /* ---------------- OpenAI fallback TTS ---------------- */
 async function openaiTTS(text, gender = "neutral") {
   try {
-    const voiceMap = { female: "shimmer", male: "verse", neutral: "alloy", mixed: "alloy" };
+    const voiceMap = { female: "shimmer", male: "verse", neutral: "alloy" };
     const out = await openai.audio.speech.create({
-      model: "gpt-4o-mini-tts", voice: voiceMap[gender] || "alloy", input: text,
+      model: "gpt-4o-mini-tts",
+      voice: voiceMap[gender] || "alloy",
+      input: text,
     });
-    console.log("✅ OpenAI TTS generated audio");
+    console.log("✅ OpenAI TTS generated audio, gender:", gender);
     return Buffer.from(await out.arrayBuffer());
-  } catch (e) { console.error("❌ OpenAI TTS error:", e.message); return null; }
+  } catch (e) {
+    console.error("❌ OpenAI TTS error:", e.message);
+    return null;
+  }
 }
 
 /* ---------------- State ---------------- */
@@ -78,7 +82,7 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 (Sept 2025, with gender) ---------------- */
+/* ---------------- Spotify Top 50 ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
@@ -118,7 +122,6 @@ function pickSongAlgorithm() {
   return pool[idx];
 }
 
-// Resolve gender for both image + voice
 function resolveImageGender(gender) {
   if (gender === "mixed") {
     return Math.random() < 0.5 ? "male" : "female";
@@ -173,11 +176,14 @@ async function generateNextPick() {
     const imageUrl = await generateImageUrl(resolvedGender);
 
     let voiceBase64 = null;
+    let audioBuffer = null;
+
     const voiceChoice = pickRandomVoiceByGender(resolvedGender);
-    let audioBuffer = await googleTTS(description, voiceChoice);
+    audioBuffer = await googleTTS(description, voiceChoice);
     if (!audioBuffer) audioBuffer = await openaiTTS(description, resolvedGender);
+
     if (audioBuffer) {
-      console.log("✅ Voice generated (bytes:", audioBuffer.length, ")");
+      console.log("✅ Voice generated (bytes:", audioBuffer.length, "gender:", resolvedGender, ")");
       voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
     }
 
@@ -225,6 +231,7 @@ app.get("/api/voice", async (req, res) => {
       return res.send(buffer);
     }
 
+    // Default: female if nothing else
     const voiceChoice = pickRandomVoiceByGender("female");
     let audioBuffer = await googleTTS(text, voiceChoice);
     if (!audioBuffer) audioBuffer = await openaiTTS(text, artist);
