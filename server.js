@@ -114,14 +114,6 @@ function pickSongAlgorithm() {
   return pool[idx];
 }
 
-// ✅ Bias male when mixed
-function resolveImageGender(gender) {
-  if (gender === "mixed") {
-    return Math.random() < 0.7 ? "male" : "female"; // 70% male bias
-  }
-  return gender;
-}
-
 function stylizedPrompt(gender) {
   return [
     "Create a high-impact, shareable cover image.",
@@ -162,24 +154,23 @@ async function generateNextPick() {
     const pick = pickSongAlgorithm();
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    // ✅ Resolve gender for image FIRST
-    const finalGender = resolveImageGender(pick.gender);
+    // ✅ Force male voice & male image
+    const finalGender = "male";
 
     // Image
     const imageUrl = await generateImageUrl(finalGender);
 
-    // Voice (always use gender chosen for image)
+    // Voice
     const voiceChoice = pickVoiceByGender(finalGender);
     let audioBuffer = await googleTTS(description, voiceChoice);
     if (!audioBuffer) audioBuffer = await openaiTTS(description, finalGender);
 
     let voiceBase64 = null;
     if (audioBuffer) {
-      console.log("✅ Voice generated (bytes:", audioBuffer.length, "gender:", finalGender, ")");
+      console.log("✅ Voice generated (bytes:", audioBuffer.length, "forced male)");
       voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
     }
 
-    // Cache includes final gender actually used
     nextPickCache = {
       title: pick.title,
       artist: pick.artist,
@@ -234,9 +225,9 @@ app.get("/api/voice", async (req, res) => {
     const artist = req.query.artist || "neutral";
     if (!text) return res.status(400).json({ error: "Missing text" });
 
-    const voiceChoice = pickVoiceByGender("female");
+    const voiceChoice = pickVoiceByGender("male"); // ✅ force male voice
     let audioBuffer = await googleTTS(text, voiceChoice);
-    if (!audioBuffer) audioBuffer = await openaiTTS(text, artist);
+    if (!audioBuffer) audioBuffer = await openaiTTS(text, "male");
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
@@ -246,10 +237,9 @@ app.get("/api/voice", async (req, res) => {
 app.get("/api/test-google", async (req, res) => {
   try {
     const text = "Google TTS is working. Hello from 323drop!";
-    const style = req.query.style || "female";
-    const voiceChoice = pickVoiceByGender(style);
+    const voiceChoice = pickVoiceByGender("male"); // ✅ force male test
     let audioBuffer = await googleTTS(text, voiceChoice);
-    if (!audioBuffer) audioBuffer = await openaiTTS(text, "neutral");
+    if (!audioBuffer) audioBuffer = await openaiTTS(text, "male");
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
