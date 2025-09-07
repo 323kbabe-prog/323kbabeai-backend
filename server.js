@@ -125,14 +125,13 @@ function resolveImageGender(gender) {
 }
 
 function stylizedPrompt(gender) {
-  const resolvedGender = resolveImageGender(gender);
   return [
     "Create a high-impact, shareable cover image.",
     "Audience: Gen-Z fan culture. Visual goal: lockscreen-ready idol photocard vibe.",
     "Make an ORIGINAL idol-like face and styling; do NOT replicate real celebrities.",
     "No text, logos, or watermarks.",
     "Square 1:1 composition.",
-    `The performer should appear as a young ${resolvedGender} Korean idol (Gen-Z style).`,
+    `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`,
     "• pastel gradient background (milk pink, baby blue, lilac)",
     "• glitter bokeh and lens glints",
     "• flash-lit glossy skin with subtle K-beauty glow",
@@ -165,27 +164,32 @@ async function generateNextPick() {
     const pick = pickSongAlgorithm();
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    // ✅ Resolve gender ONCE for both image + voice
-    const resolvedGender = resolveImageGender(pick.gender);
+    // ✅ Resolve gender for image FIRST
+    const finalGender = resolveImageGender(pick.gender);
 
-    const imageUrl = await generateImageUrl(resolvedGender);
+    // Image
+    const imageUrl = await generateImageUrl(finalGender);
+
+    // Voice (always use gender chosen for image)
+    const voiceChoice = pickVoiceByGender(finalGender);
+    let audioBuffer = await googleTTS(description, voiceChoice);
+    if (!audioBuffer) audioBuffer = await openaiTTS(description, finalGender);
 
     let voiceBase64 = null;
-    let audioBuffer = null;
-
-    const voiceChoice = pickVoiceByGender(resolvedGender);
-    audioBuffer = await googleTTS(description, voiceChoice);
-    if (!audioBuffer) audioBuffer = await openaiTTS(description, resolvedGender);
-
     if (audioBuffer) {
-      console.log("✅ Voice generated (bytes:", audioBuffer.length, "gender:", resolvedGender, ")");
+      console.log("✅ Voice generated (bytes:", audioBuffer.length, "gender:", finalGender, ")");
       voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
     }
 
+    // Cache includes final gender actually used
     nextPickCache = {
-      title: pick.title, artist: pick.artist, gender: resolvedGender,
-      description, hashtags: ["#NowPlaying", "#AIFavorite"],
-      image: imageUrl, voice: voiceBase64,
+      title: pick.title,
+      artist: pick.artist,
+      gender: finalGender,
+      description,
+      hashtags: ["#NowPlaying", "#AIFavorite"],
+      image: imageUrl,
+      voice: voiceBase64,
       refresh: voiceBase64 ? 3000 : null
     };
   } finally { generatingNext = false; }
@@ -194,7 +198,6 @@ async function generateNextPick() {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
-    // ✅ Ensure first drop waits until ready
     if (!nextPickCache) {
       console.log("⏳ First drop generating…");
       await generateNextPick();
@@ -203,8 +206,7 @@ app.get("/api/trend", async (req, res) => {
     const result = nextPickCache;
     nextPickCache = null;
 
-    // Pre-generate next in background
-    generateNextPick();
+    generateNextPick(); // pre-gen next in background
 
     res.json(result);
   } catch (e) {
