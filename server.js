@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Gender-only image prompt)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Cold-start fix)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -79,7 +79,7 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 USA (Sept 2025, with gender) ---------------- */
+/* ---------------- Spotify Top 50 (Sept 2025, with gender) ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
@@ -245,17 +245,13 @@ async function generateNextPick(style = "female") {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
-    let result;
-    if (nextPickCache) {
-      result = nextPickCache;
-      nextPickCache = null;
-      generateNextPick(req.query.style || "female");
-    } else {
+    // ✅ Always wait if cache is empty (fix cold-start empty response)
+    if (!nextPickCache) {
       await generateNextPick(req.query.style || "female");
-      result = nextPickCache;
-      nextPickCache = null;
-      generateNextPick(req.query.style || "female");
     }
+    const result = nextPickCache;
+    nextPickCache = null;
+    generateNextPick(req.query.style || "female"); // pre-gen next
     res.json(result);
   } catch (e) {
     console.error("❌ Trend API error:", e);
