@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Prompt Cleaning)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Gender-only image prompt)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -79,7 +79,7 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 ---------------- */
+/* ---------------- Spotify Top 50 USA (Sept 2025, with gender) ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
@@ -133,10 +133,6 @@ const TOP50_USA = [
 ];
 
 /* ---------------- Helpers ---------------- */
-function cleanForPrompt(str = "") {
-  return str.replace(/(kill|suicide|murder|die|death|weapon|gun|yourself)/gi, "").trim();
-}
-
 async function makeFirstPersonDescription(title, artist) {
   try {
     console.log("📝 Generating description for:", title, "by", artist);
@@ -168,9 +164,10 @@ function pickSongAlgorithm() {
   return pool[idx];
 }
 
-function stylizedPrompt(title, artist, gender) {
+/* ---------------- Image Prompt (gender-only) ---------------- */
+function stylizedPrompt(gender) {
   return [
-    `Create a high-impact, shareable cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
+    "Create a high-impact, shareable cover image.",
     "Audience: Gen-Z fan culture. Visual goal: lockscreen-ready idol photocard vibe.",
     "Make an ORIGINAL idol-like face and styling; do NOT replicate real celebrities.",
     "No text, logos, or watermarks.",
@@ -178,17 +175,19 @@ function stylizedPrompt(title, artist, gender) {
     `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`,
     "• pastel gradient background (milk pink, baby blue, lilac)",
     "• glitter bokeh and lens glints",
-    "• flash-lit glossy skin with subtle K-beauty glow"
+    "• flash-lit glossy skin with subtle K-beauty glow",
+    "• sticker shapes ONLY (hearts, stars, sparkles) floating lightly",
+    "• clean studio sweep look; subtle film grain"
   ].join(" ");
 }
 
 /* ---------------- Image generation ---------------- */
-async function generateImageUrl(prompt) {
+async function generateImageUrl(gender) {
   try {
-    console.log("🎨 Generating image…");
+    console.log("🎨 Generating image for gender:", gender);
     const out = await openai.images.generate({
       model: "gpt-image-1",
-      prompt,
+      prompt: stylizedPrompt(gender),
       size: "1024x1024"
     });
     const d = out?.data?.[0];
@@ -215,7 +214,7 @@ async function generateNextPick(style = "female") {
   try {
     const pick = pickSongAlgorithm();
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
-    const imageUrl = await generateImageUrl(stylizedPrompt(pick.title, pick.artist, pick.gender));
+    const imageUrl = await generateImageUrl(pick.gender);
 
     // Voice (Google first, OpenAI fallback)
     let voiceBase64 = null;
