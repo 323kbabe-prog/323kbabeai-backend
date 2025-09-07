@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen + OpenAI description/images + Google TTS voice + Failsafe)
+// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen + OpenAI description/images + Google TTS voice + Failsafe + Test endpoint)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -246,6 +246,7 @@ app.get("/api/trend", async (req, res) => {
   }
 });
 
+/* ---------------- Standalone Voice Route ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
@@ -257,6 +258,21 @@ app.get("/api/voice", async (req, res) => {
     res.send(audioBuffer);
   } catch (e) {
     res.status(500).json({ error: "Voice TTS failed" });
+  }
+});
+
+/* ---------------- Test Google TTS ---------------- */
+app.get("/api/test-google", async (req, res) => {
+  try {
+    const text = "Google TTS is working. Hello from 323drop!";
+    const style = req.query.style || "female";
+    const audioBuffer = await googleTTS(text, style);
+    if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(audioBuffer);
+  } catch (e) {
+    console.error("❌ Test TTS failed:", e.message);
+    res.status(500).json({ error: "Test TTS failed" });
   }
 });
 
