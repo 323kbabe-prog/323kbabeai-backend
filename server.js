@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Stable Trend)
+// male.js — 323drop Live (Male-Only Mode)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -26,23 +26,20 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 /* ---------------- Google TTS ---------------- */
 const googleTTSClient = new textToSpeech.TextToSpeechClient();
 
-// ✅ Locked Gen-Z voices
-function pickVoiceByGender(gender) {
-  if (gender === "male") {
-    return { languageCode: "en-US", name: "en-US-Neural2-D", ssmlGender: "MALE" }; // young male
-  }
-  return { languageCode: "en-US", name: "en-US-Neural2-C", ssmlGender: "FEMALE" }; // young female
+// ✅ Always male voice (Gen-Z style)
+function pickMaleVoice() {
+  return { languageCode: "en-US", name: "en-US-Neural2-D", ssmlGender: "MALE" };
 }
 
-async function googleTTS(text, voiceChoice) {
+async function googleTTS(text) {
   try {
     const [response] = await googleTTSClient.synthesizeSpeech({
       input: { text },
-      voice: voiceChoice,
+      voice: pickMaleVoice(),
       audioConfig: { audioEncoding: "MP3" }
     });
     if (!response.audioContent) return null;
-    console.log("✅ Google TTS audio length:", response.audioContent.length, "voice:", voiceChoice.name);
+    console.log("✅ Google TTS audio length:", response.audioContent.length, "voice: male");
     return Buffer.from(response.audioContent, "binary");
   } catch (e) {
     console.error("❌ Google TTS error:", e.message);
@@ -51,15 +48,14 @@ async function googleTTS(text, voiceChoice) {
 }
 
 /* ---------------- OpenAI fallback TTS ---------------- */
-async function openaiTTS(text, gender = "neutral") {
+async function openaiTTS(text) {
   try {
-    const voiceMap = { female: "shimmer", male: "verse", neutral: "alloy" };
     const out = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: voiceMap[gender] || "alloy",
+      voice: "verse", // ✅ male fallback
       input: text,
     });
-    console.log("✅ OpenAI TTS generated audio, gender:", gender);
+    console.log("✅ OpenAI TTS generated male audio");
     return Buffer.from(await out.arrayBuffer());
   } catch (e) {
     console.error("❌ OpenAI TTS error:", e.message);
@@ -72,14 +68,13 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 ---------------- */
+/* ---------------- Spotify Top 50 (songs stay same, gender ignored) ---------------- */
 const TOP50_USA = [
-  { title: "The Subway", artist: "Chappell Roan", gender: "female" },
-  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  { title: "Soda Pop", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  // ... rest of Top 50 ...
-  { title: "Levitating", artist: "Dua Lipa", gender: "female" }
+  { title: "The Subway", artist: "Chappell Roan" },
+  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami" },
+  { title: "Your Idol", artist: "Saja Boys, Andrew Choi" },
+  { title: "Soda Pop", artist: "Saja Boys, Andrew Choi" },
+  { title: "Levitating", artist: "Dua Lipa" }
 ];
 
 /* ---------------- Helpers ---------------- */
@@ -107,21 +102,19 @@ async function makeFirstPersonDescription(title, artist) {
 }
 
 function pickSongAlgorithm() {
-  const weightTop = 0.7;
-  let pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
-  if (!pool.length) pool = TOP50_USA;
-  const idx = Math.floor(Math.random() * pool.length);
-  return pool[idx];
+  const idx = Math.floor(Math.random() * TOP50_USA.length);
+  return TOP50_USA[idx];
 }
 
-function stylizedPrompt(gender) {
+// ✅ Always male image
+function stylizedPrompt() {
   return [
     "Create a high-impact, shareable cover image.",
     "Audience: Gen-Z fan culture. Visual goal: lockscreen-ready idol photocard vibe.",
     "Make an ORIGINAL idol-like face and styling; do NOT replicate real celebrities.",
     "No text, logos, or watermarks.",
     "Square 1:1 composition.",
-    `The performer should appear as a young ${gender} Korean idol (Gen-Z style).`,
+    "The performer should appear as a young male Korean idol (Gen-Z style).",
     "• pastel gradient background (milk pink, baby blue, lilac)",
     "• glitter bokeh and lens glints",
     "• flash-lit glossy skin with subtle K-beauty glow",
@@ -130,11 +123,11 @@ function stylizedPrompt(gender) {
   ].join(" ");
 }
 
-async function generateImageUrl(gender) {
+async function generateImageUrl() {
   try {
-    console.log("🎨 Generating image for gender:", gender);
+    console.log("🎨 Generating male idol image");
     const out = await openai.images.generate({
-      model: "gpt-image-1", prompt: stylizedPrompt(gender), size: "1024x1024"
+      model: "gpt-image-1", prompt: stylizedPrompt(), size: "1024x1024"
     });
     const d = out?.data?.[0];
     if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
@@ -154,20 +147,19 @@ async function generateNextPick() {
     const pick = pickSongAlgorithm();
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    // ✅ Force male voice & male image
+    // ✅ Always male
     const finalGender = "male";
 
     // Image
-    const imageUrl = await generateImageUrl(finalGender);
+    const imageUrl = await generateImageUrl();
 
     // Voice
-    const voiceChoice = pickVoiceByGender(finalGender);
-    let audioBuffer = await googleTTS(description, voiceChoice);
-    if (!audioBuffer) audioBuffer = await openaiTTS(description, finalGender);
+    let audioBuffer = await googleTTS(description);
+    if (!audioBuffer) audioBuffer = await openaiTTS(description);
 
     let voiceBase64 = null;
     if (audioBuffer) {
-      console.log("✅ Voice generated (bytes:", audioBuffer.length, "forced male)");
+      console.log("✅ Male voice generated (bytes:", audioBuffer.length, ")");
       voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
     }
 
@@ -195,7 +187,7 @@ app.get("/api/trend", async (req, res) => {
     const result = nextPickCache || {
       title: "Loading Song",
       artist: "System",
-      gender: "neutral",
+      gender: "male",
       description: "AI is warming up… please wait.",
       hashtags: ["#NowPlaying"],
       image: "https://placehold.co/600x600?text=Loading",
@@ -210,7 +202,7 @@ app.get("/api/trend", async (req, res) => {
   } catch (e) {
     console.error("❌ Trend API error:", e);
     res.json({
-      title: "Error Song", artist: "System", gender: "neutral",
+      title: "Error Song", artist: "System", gender: "male",
       description: "Something went wrong. Retrying soon…",
       hashtags: ["#Error"],
       image: "https://placehold.co/600x600?text=Error",
@@ -222,12 +214,10 @@ app.get("/api/trend", async (req, res) => {
 app.get("/api/voice", async (req, res) => {
   try {
     const text = req.query.text || "";
-    const artist = req.query.artist || "neutral";
     if (!text) return res.status(400).json({ error: "Missing text" });
 
-    const voiceChoice = pickVoiceByGender("male"); // ✅ force male voice
-    let audioBuffer = await googleTTS(text, voiceChoice);
-    if (!audioBuffer) audioBuffer = await openaiTTS(text, "male");
+    let audioBuffer = await googleTTS(text);
+    if (!audioBuffer) audioBuffer = await openaiTTS(text);
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
@@ -236,10 +226,9 @@ app.get("/api/voice", async (req, res) => {
 
 app.get("/api/test-google", async (req, res) => {
   try {
-    const text = "Google TTS is working. Hello from 323drop!";
-    const voiceChoice = pickVoiceByGender("male"); // ✅ force male test
-    let audioBuffer = await googleTTS(text, voiceChoice);
-    if (!audioBuffer) audioBuffer = await openaiTTS(text, "male");
+    const text = "Google TTS is working. Hello from 323drop male mode!";
+    let audioBuffer = await googleTTS(text);
+    if (!audioBuffer) audioBuffer = await openaiTTS(text);
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
@@ -251,6 +240,6 @@ app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
-  console.log(`323drop live backend on :${PORT}`);
+  console.log(`323drop live backend (male-only) on :${PORT}`);
   await generateNextPick(); // ✅ Pre-warm first drop
 });
