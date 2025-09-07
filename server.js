@@ -1,4 +1,4 @@
-// male.js — 323drop Live (Male-Only Mode)
+// male.js — 323drop Live (Male-Only Mode, Full Top 50)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -68,12 +68,55 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 (songs stay same, gender ignored) ---------------- */
+/* ---------------- Spotify Top 50 (Sept 2025) ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan" },
-  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami" },
-  { title: "Your Idol", artist: "Saja Boys, Andrew Choi" },
-  { title: "Soda Pop", artist: "Saja Boys, Andrew Choi" },
+  { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast" },
+  { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast" },
+  { title: "Soda Pop", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast" },
+  { title: "How It’s Done", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast" },
+  { title: "DAISIES", artist: "Justin Bieber" },
+  { title: "Ordinary", artist: "Alex Warren" },
+  { title: "What It Sounds Like", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast" },
+  { title: "Takedown", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast" },
+  { title: "Love Me Not", artist: "Ravyn Lenae" },
+  { title: "Free", artist: "Rumi, Jinu, EJAE, Andrew Choi, KPop Demon Hunters Cast" },
+  { title: "Dreams (2004 Remaster)", artist: "Fleetwood Mac" },
+  { title: "What I Want (feat. Tate McRae)", artist: "Morgan Wallen, Tate McRae" },
+  { title: "undressed", artist: "sombr" },
+  { title: "Manchild", artist: "Sabrina Carpenter" },
+  { title: "I Got Better", artist: "Morgan Wallen" },
+  { title: "Just In Case", artist: "Morgan Wallen" },
+  { title: "No One Noticed", artist: "The Marías" },
+  { title: "BIRDS OF A FEATHER", artist: "Billie Eilish" },
+  { title: "Last Time I Saw You", artist: "Nicki Minaj" },
+  { title: "Need You Now", artist: "Lady Antebellum" },
+  { title: "One of the Girls", artist: "The Weeknd, JENNIE, Lily-Rose Depp" },
+  { title: "Paint The Town Red", artist: "Doja Cat" },
+  { title: "Lose Yourself", artist: "Eminem" },
+  { title: "Die With A Smile", artist: "Lady Gaga & Bruno Mars" },
+  { title: "Luther", artist: "Kendrick Lamar & SZA" },
+  { title: "Ordinary (Acoustic)", artist: "Alex Warren" },
+  { title: "TEXAS HOLD 'EM", artist: "Beyoncé" },
+  { title: "Houdini", artist: "Dua Lipa" },
+  { title: "Espresso", artist: "Sabrina Carpenter" },
+  { title: "Snow On The Beach", artist: "Taylor Swift, Lana Del Rey" },
+  { title: "Gently", artist: "Drake feat. Bad Bunny" },
+  { title: "Cruel Summer", artist: "Taylor Swift" },
+  { title: "I Like The Way You Kiss Me", artist: "Artemas" },
+  { title: "Seven (feat. Latto)", artist: "Jung Kook, Latto" },
+  { title: "IDGAF", artist: "Drake" },
+  { title: "Too Sweet", artist: "Hozier" },
+  { title: "Slime You Out", artist: "Drake feat. SZA" },
+  { title: "Barbie World", artist: "Nicki Minaj, Ice Spice, Aqua" },
+  { title: "Peaches", artist: "Justin Bieber feat. Daniel Caesar & Giveon" },
+  { title: "Up", artist: "Cardi B" },
+  { title: "MONTERO (Call Me By Your Name)", artist: "Lil Nas X" },
+  { title: "drivers license", artist: "Olivia Rodrigo" },
+  { title: "Shivers", artist: "Ed Sheeran" },
+  { title: "Blinding Lights", artist: "The Weeknd" },
+  { title: "As It Was", artist: "Harry Styles" },
+  { title: "Flowers", artist: "Miley Cyrus" },
   { title: "Levitating", artist: "Dua Lipa" }
 ];
 
@@ -102,7 +145,10 @@ async function makeFirstPersonDescription(title, artist) {
 }
 
 function pickSongAlgorithm() {
-  const idx = Math.floor(Math.random() * TOP50_USA.length);
+  const weightTop = 0.7;
+  let pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
+  if (!pool.length) pool = TOP50_USA;
+  const idx = Math.floor(Math.random() * pool.length);
   return TOP50_USA[idx];
 }
 
@@ -147,13 +193,8 @@ async function generateNextPick() {
     const pick = pickSongAlgorithm();
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
 
-    // ✅ Always male
-    const finalGender = "male";
-
-    // Image
     const imageUrl = await generateImageUrl();
 
-    // Voice
     let audioBuffer = await googleTTS(description);
     if (!audioBuffer) audioBuffer = await openaiTTS(description);
 
@@ -166,7 +207,7 @@ async function generateNextPick() {
     nextPickCache = {
       title: pick.title,
       artist: pick.artist,
-      gender: finalGender,
+      gender: "male",
       description,
       hashtags: ["#NowPlaying", "#AIFavorite"],
       image: imageUrl,
@@ -240,6 +281,6 @@ app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
-  console.log(`323drop live backend (male-only) on :${PORT}`);
+  console.log(`323drop live backend (male-only, full Top 50) on :${PORT}`);
   await generateNextPick(); // ✅ Pre-warm first drop
 });
