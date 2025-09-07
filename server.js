@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen + OpenAI description/images + Google TTS voice + Debug response logging)
+// server.js — 323drop Live (Spotify Top 50 USA + Pre-gen + OpenAI description/images + Google TTS voice + Failsafe + Test endpoint)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -24,6 +24,7 @@ const openai = new OpenAI({
 });
 
 /* ---------------- Google TTS ---------------- */
+// ✅ No hardcoded path. Uses GOOGLE_APPLICATION_CREDENTIALS env var.
 const googleTTSClient = new textToSpeech.TextToSpeechClient();
 
 async function googleTTS(text, style = "female") {
@@ -40,9 +41,7 @@ async function googleTTS(text, style = "female") {
       audioConfig: { audioEncoding: "MP3" }
     });
 
-    // 🔎 Debug: log the raw response from Google
-    console.log("🔎 Google TTS raw response:", JSON.stringify(response, null, 2));
-
+    // 🔎 Debug: log if audio is missing
     if (!response.audioContent) {
       console.error("❌ Google TTS returned no audio. Check credentials & billing.");
       return null;
@@ -65,7 +64,7 @@ let lastImgErr = null;
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  // … include all 50 songs …
+  // … include full 50 here …
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -218,6 +217,7 @@ app.get("/api/voice", async (req, res) => {
   }
 });
 
+/* ---------------- Test Google TTS ---------------- */
 app.get("/api/test-google", async (req, res) => {
   try {
     const text = "Google TTS is working. Hello from 323drop!";
