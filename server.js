@@ -199,12 +199,18 @@ async function generateNextPick() {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
+    // ✅ Ensure first drop waits until ready
     if (!nextPickCache) {
+      console.log("⏳ First drop generating…");
       await generateNextPick();
     }
+
     const result = nextPickCache;
     nextPickCache = null;
-    generateNextPick(); // pre-gen next
+
+    // Pre-generate next in background
+    generateNextPick();
+
     res.json(result);
   } catch (e) {
     console.error("❌ Trend API error:", e);
@@ -231,7 +237,6 @@ app.get("/api/voice", async (req, res) => {
       return res.send(buffer);
     }
 
-    // Default: female if nothing else
     const voiceChoice = pickRandomVoiceByGender("female");
     let audioBuffer = await googleTTS(text, voiceChoice);
     if (!audioBuffer) audioBuffer = await openaiTTS(text, artist);
@@ -258,7 +263,8 @@ app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`323drop live backend on :${PORT}`);
-  generateNextPick();
+  // ✅ Pre-warm first drop so first request never fails
+  await generateNextPick();
 });
