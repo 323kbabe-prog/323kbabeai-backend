@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Cold-start fix)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + /api/voice route)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -164,7 +164,7 @@ function pickSongAlgorithm() {
   return pool[idx];
 }
 
-/* ---------------- Image Prompt (gender-only) ---------------- */
+/* ---------------- Image Prompt ---------------- */
 function stylizedPrompt(gender) {
   return [
     "Create a high-impact, shareable cover image.",
@@ -245,7 +245,6 @@ async function generateNextPick(style = "female") {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
-    // ✅ Always wait if cache is empty (fix cold-start empty response)
     if (!nextPickCache) {
       await generateNextPick(req.query.style || "female");
     }
@@ -265,6 +264,24 @@ app.get("/api/trend", async (req, res) => {
       voice: null,
       refresh: null
     });
+  }
+});
+
+/* ---------------- Voice route (for your frontend) ---------------- */
+app.get("/api/voice", async (req, res) => {
+  try {
+    const text = req.query.text || "";
+    const artist = req.query.artist || "neutral";
+    if (!text) return res.status(400).json({ error: "Missing text" });
+
+    let audioBuffer = await googleTTS(text, "female");
+    if (!audioBuffer) audioBuffer = await openaiTTS(text, artist);
+
+    if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(audioBuffer);
+  } catch (e) {
+    res.status(500).json({ error: "Voice TTS failed" });
   }
 });
 
