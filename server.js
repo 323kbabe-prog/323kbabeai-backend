@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Debug logs)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Prompt Cleaning)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -79,7 +79,7 @@ let nextPickCache = null;
 let generatingNext = false;
 let lastImgErr = null;
 
-/* ---------------- Spotify Top 50 (full list here) ---------------- */
+/* ---------------- Spotify Top 50 ---------------- */
 const TOP50_USA = [
   { title: "The Subway", artist: "Chappell Roan", gender: "female" },
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
@@ -133,6 +133,10 @@ const TOP50_USA = [
 ];
 
 /* ---------------- Helpers ---------------- */
+function cleanForPrompt(str = "") {
+  return str.replace(/(kill|suicide|murder|die|death|weapon|gun|yourself)/gi, "").trim();
+}
+
 async function makeFirstPersonDescription(title, artist) {
   try {
     console.log("📝 Generating description for:", title, "by", artist);
@@ -166,7 +170,7 @@ function pickSongAlgorithm() {
 
 function stylizedPrompt(title, artist, gender) {
   return [
-    `Create a high-impact, shareable cover image for the song "${title}" by ${artist}.`,
+    `Create a high-impact, shareable cover image for the song "${cleanForPrompt(title)}" by ${cleanForPrompt(artist)}.`,
     "Audience: Gen-Z fan culture. Visual goal: lockscreen-ready idol photocard vibe.",
     "Make an ORIGINAL idol-like face and styling; do NOT replicate real celebrities.",
     "No text, logos, or watermarks.",
