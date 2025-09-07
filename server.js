@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + /api/voice route)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + /api/voice + SSE)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -18,13 +18,10 @@ app.use(cors({
 }));
 
 /* ---------------- OpenAI ---------------- */
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /* ---------------- Google TTS ---------------- */
 const googleTTSClient = new textToSpeech.TextToSpeechClient();
-
 async function googleTTS(text, style = "female") {
   try {
     const voiceMap = {
@@ -32,46 +29,24 @@ async function googleTTS(text, style = "female") {
       male:   { languageCode: "en-US", name: "en-US-Neural2-D", ssmlGender: "MALE" }
     };
     const voice = voiceMap[style] || voiceMap.female;
-
     const [response] = await googleTTSClient.synthesizeSpeech({
-      input: { text },
-      voice,
-      audioConfig: { audioEncoding: "MP3" }
+      input: { text }, voice, audioConfig: { audioEncoding: "MP3" }
     });
-
-    if (!response.audioContent) {
-      console.error("❌ Google TTS returned no audio");
-      return null;
-    }
-
+    if (!response.audioContent) return null;
     console.log("✅ Google TTS audio length:", response.audioContent.length);
     return Buffer.from(response.audioContent, "binary");
-  } catch (e) {
-    console.error("❌ Google TTS error:", e.message);
-    return null;
-  }
+  } catch (e) { console.error("❌ Google TTS error:", e.message); return null; }
 }
 
 /* ---------------- OpenAI fallback TTS ---------------- */
 async function openaiTTS(text, gender = "neutral") {
   try {
-    const voiceMap = {
-      female: "shimmer",
-      male: "verse",
-      neutral: "alloy",
-      mixed: "alloy"
-    };
+    const voiceMap = { female: "shimmer", male: "verse", neutral: "alloy", mixed: "alloy" };
     const out = await openai.audio.speech.create({
-      model: "gpt-4o-mini-tts",
-      voice: voiceMap[gender] || "alloy",
-      input: text,
+      model: "gpt-4o-mini-tts", voice: voiceMap[gender] || "alloy", input: text,
     });
-    console.log("✅ OpenAI TTS generated audio");
     return Buffer.from(await out.arrayBuffer());
-  } catch (e) {
-    console.error("❌ OpenAI TTS error:", e.message);
-    return null;
-  }
+  } catch (e) { console.error("❌ OpenAI TTS error:", e.message); return null; }
 }
 
 /* ---------------- State ---------------- */
@@ -142,8 +117,7 @@ async function makeFirstPersonDescription(title, artist) {
       Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
     `;
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.9,
+      model: "gpt-4o-mini", temperature: 0.9,
       messages: [
         { role: "system", content: "You are a music fan channeling the artist’s voice in first person." },
         { role: "user", content: prompt }
@@ -155,7 +129,6 @@ async function makeFirstPersonDescription(title, artist) {
     return `“${title}” by ${artist} is unforgettable, replay-worthy, and addictive.`;
   }
 }
-
 function pickSongAlgorithm() {
   const weightTop = 0.7;
   let pool = Math.random() < weightTop ? TOP50_USA.slice(0, 20) : TOP50_USA.slice(20);
@@ -163,8 +136,6 @@ function pickSongAlgorithm() {
   const idx = Math.floor(Math.random() * pool.length);
   return pool[idx];
 }
-
-/* ---------------- Image Prompt ---------------- */
 function stylizedPrompt(gender) {
   return [
     "Create a high-impact, shareable cover image.",
@@ -180,26 +151,15 @@ function stylizedPrompt(gender) {
     "• clean studio sweep look; subtle film grain"
   ].join(" ");
 }
-
-/* ---------------- Image generation ---------------- */
 async function generateImageUrl(gender) {
   try {
     console.log("🎨 Generating image for gender:", gender);
     const out = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt: stylizedPrompt(gender),
-      size: "1024x1024"
+      model: "gpt-image-1", prompt: stylizedPrompt(gender), size: "1024x1024"
     });
     const d = out?.data?.[0];
-    if (d?.b64_json) {
-      console.log("🎨 Got image (base64).");
-      return `data:image/png;base64,${d.b64_json}`;
-    }
-    if (d?.url) {
-      console.log("🎨 Got image (url).");
-      return d.url;
-    }
-    console.log("⚠️ Image generation returned empty.");
+    if (d?.b64_json) return `data:image/png;base64,${d.b64_json}`;
+    if (d?.url) return d.url;
   } catch (e) {
     lastImgErr = { message: e?.message || String(e) };
     console.error("❌ Image gen error:", lastImgErr);
@@ -223,31 +183,21 @@ async function generateNextPick(style = "female") {
     if (audioBuffer) {
       console.log("✅ Voice generated (bytes:", audioBuffer.length, ")");
       voiceBase64 = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
-    } else {
-      console.log("⚠️ No voice generated for this drop.");
     }
 
     nextPickCache = {
-      title: pick.title,
-      artist: pick.artist,
-      gender: pick.gender,
-      description,
-      hashtags: ["#NowPlaying", "#AIFavorite"],
-      image: imageUrl,
-      voice: voiceBase64,
+      title: pick.title, artist: pick.artist, gender: pick.gender,
+      description, hashtags: ["#NowPlaying", "#AIFavorite"],
+      image: imageUrl, voice: voiceBase64,
       refresh: voiceBase64 ? 3000 : null
     };
-  } finally {
-    generatingNext = false;
-  }
+  } finally { generatingNext = false; }
 }
 
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
-    if (!nextPickCache) {
-      await generateNextPick(req.query.style || "female");
-    }
+    if (!nextPickCache) await generateNextPick(req.query.style || "female");
     const result = nextPickCache;
     nextPickCache = null;
     generateNextPick(req.query.style || "female"); // pre-gen next
@@ -255,36 +205,24 @@ app.get("/api/trend", async (req, res) => {
   } catch (e) {
     console.error("❌ Trend API error:", e);
     res.json({
-      title: "Error Song",
-      artist: "System",
-      gender: "neutral",
+      title: "Error Song", artist: "System", gender: "neutral",
       description: "Something went wrong. Retrying soon…",
-      hashtags: ["#Error"],
-      image: "https://placehold.co/600x600?text=Error",
-      voice: null,
-      refresh: null
+      hashtags: ["#Error"], image: "https://placehold.co/600x600?text=Error",
+      voice: null, refresh: null
     });
   }
 });
-
-/* ---------------- Voice route (for your frontend) ---------------- */
 app.get("/api/voice", async (req, res) => {
   try {
-    const text = req.query.text || "";
-    const artist = req.query.artist || "neutral";
+    const text = req.query.text || ""; const artist = req.query.artist || "neutral";
     if (!text) return res.status(400).json({ error: "Missing text" });
-
     let audioBuffer = await googleTTS(text, "female");
     if (!audioBuffer) audioBuffer = await openaiTTS(text, artist);
-
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
-  } catch (e) {
-    res.status(500).json({ error: "Voice TTS failed" });
-  }
+  } catch (e) { res.status(500).json({ error: "Voice TTS failed" }); }
 });
-
 app.get("/api/test-google", async (req, res) => {
   try {
     const text = "Google TTS is working. Hello from 323drop!";
@@ -294,11 +232,8 @@ app.get("/api/test-google", async (req, res) => {
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(audioBuffer);
-  } catch (e) {
-    res.status(500).json({ error: "Test TTS failed" });
-  }
+  } catch (e) { res.status(500).json({ error: "Test TTS failed" }); }
 });
-
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 
 /* ---------------- Start ---------------- */
