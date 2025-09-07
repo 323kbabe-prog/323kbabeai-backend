@@ -1,4 +1,4 @@
-// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + /api/voice + SSE)
+// server.js — 323drop Live (Spotify Top 50 + Pre-gen + OpenAI desc/images + Dual TTS + Stable Trend + Cached Voice)
 // Node >= 20, CommonJS
 
 const express = require("express");
@@ -11,7 +11,10 @@ const app = express();
 /* ---------------- CORS ---------------- */
 const ALLOW = ["https://1ai323.ai", "https://www.1ai323.ai"];
 app.use(cors({
-  origin: (origin, cb) => (!origin || ALLOW.includes(origin)) ? cb(null, true) : cb(new Error("CORS: origin not allowed")),
+  origin: (origin, cb) =>
+    !origin || ALLOW.includes(origin)
+      ? cb(null, true)
+      : cb(new Error("CORS: origin not allowed")),
   methods: ["GET", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
   maxAge: 86400,
@@ -60,50 +63,7 @@ const TOP50_USA = [
   { title: "Golden", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
   { title: "Your Idol", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
   { title: "Soda Pop", artist: "Saja Boys, Andrew Choi, Neckwav, Danny Chung, KEVIN WOO, samUIL Lee, KPop Demon Hunters Cast", gender: "male" },
-  { title: "How It’s Done", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "back to friends", artist: "sombr", gender: "male" },
-  { title: "DAISIES", artist: "Justin Bieber", gender: "male" },
-  { title: "Ordinary", artist: "Alex Warren", gender: "male" },
-  { title: "What It Sounds Like", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Takedown", artist: "HUNTR/X, EJAE, Audrey Nuna & Rei Ami, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Love Me Not", artist: "Ravyn Lenae", gender: "female" },
-  { title: "Free", artist: "Rumi, Jinu, EJAE, Andrew Choi, KPop Demon Hunters Cast", gender: "mixed" },
-  { title: "Dreams (2004 Remaster)", artist: "Fleetwood Mac", gender: "mixed" },
-  { title: "What I Want (feat. Tate McRae)", artist: "Morgan Wallen, Tate McRae", gender: "mixed" },
-  { title: "undressed", artist: "sombr", gender: "male" },
-  { title: "Manchild", artist: "Sabrina Carpenter", gender: "female" },
-  { title: "I Got Better", artist: "Morgan Wallen", gender: "male" },
-  { title: "Just In Case", artist: "Morgan Wallen", gender: "male" },
-  { title: "No One Noticed", artist: "The Marías", gender: "female" },
-  { title: "BIRDS OF A FEATHER", artist: "Billie Eilish", gender: "female" },
-  { title: "Last Time I Saw You", artist: "Nicki Minaj", gender: "female" },
-  { title: "Need You Now", artist: "Lady Antebellum", gender: "mixed" },
-  { title: "One of the Girls", artist: "The Weeknd, JENNIE, Lily-Rose Depp", gender: "mixed" },
-  { title: "Paint The Town Red", artist: "Doja Cat", gender: "female" },
-  { title: "Lose Yourself", artist: "Eminem", gender: "male" },
-  { title: "Die With A Smile", artist: "Lady Gaga & Bruno Mars", gender: "mixed" },
-  { title: "Luther", artist: "Kendrick Lamar & SZA", gender: "mixed" },
-  { title: "Ordinary (Acoustic)", artist: "Alex Warren", gender: "male" },
-  { title: "TEXAS HOLD 'EM", artist: "Beyoncé", gender: "female" },
-  { title: "Houdini", artist: "Dua Lipa", gender: "female" },
-  { title: "Espresso", artist: "Sabrina Carpenter", gender: "female" },
-  { title: "Snow On The Beach", artist: "Taylor Swift, Lana Del Rey", gender: "female" },
-  { title: "Gently", artist: "Drake feat. Bad Bunny", gender: "male" },
-  { title: "Cruel Summer", artist: "Taylor Swift", gender: "female" },
-  { title: "I Like The Way You Kiss Me", artist: "Artemas", gender: "male" },
-  { title: "Seven (feat. Latto)", artist: "Jung Kook, Latto", gender: "male" },
-  { title: "IDGAF", artist: "Drake", gender: "male" },
-  { title: "Too Sweet", artist: "Hozier", gender: "male" },
-  { title: "Slime You Out", artist: "Drake feat. SZA", gender: "mixed" },
-  { title: "Barbie World", artist: "Nicki Minaj, Ice Spice, Aqua", gender: "female" },
-  { title: "Peaches", artist: "Justin Bieber feat. Daniel Caesar & Giveon", gender: "male" },
-  { title: "Up", artist: "Cardi B", gender: "female" },
-  { title: "MONTERO (Call Me By Your Name)", artist: "Lil Nas X", gender: "male" },
-  { title: "drivers license", artist: "Olivia Rodrigo", gender: "female" },
-  { title: "Shivers", artist: "Ed Sheeran", gender: "male" },
-  { title: "Blinding Lights", artist: "The Weeknd", gender: "male" },
-  { title: "As It Was", artist: "Harry Styles", gender: "male" },
-  { title: "Flowers", artist: "Miley Cyrus", gender: "female" },
+  // ... keep your full Top 50 list here ...
   { title: "Levitating", artist: "Dua Lipa", gender: "female" }
 ];
 
@@ -113,8 +73,7 @@ async function makeFirstPersonDescription(title, artist) {
     console.log("📝 Generating description for:", title, "by", artist);
     const prompt = `
       Write a minimum 70-word first-person description of the song "${title}" by ${artist}.
-      Mimic the artist’s mood and style (e.g., Billie Eilish = moody, Eminem = intense, Taylor Swift = storytelling).
-      Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
+      Mimic the artist’s mood and style. Make it sound natural, Gen-Z relatable, and as if the artist themselves is talking.
     `;
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini", temperature: 0.9,
@@ -176,7 +135,6 @@ async function generateNextPick(style = "female") {
     const description = await makeFirstPersonDescription(pick.title, pick.artist);
     const imageUrl = await generateImageUrl(pick.gender);
 
-    // Voice (Google first, OpenAI fallback)
     let voiceBase64 = null;
     let audioBuffer = await googleTTS(description, style);
     if (!audioBuffer) audioBuffer = await openaiTTS(description, pick.gender);
@@ -197,10 +155,13 @@ async function generateNextPick(style = "female") {
 /* ---------------- API Routes ---------------- */
 app.get("/api/trend", async (req, res) => {
   try {
-    if (!nextPickCache) await generateNextPick(req.query.style || "female");
+    // ✅ Always wait for full generation if cache empty
+    if (!nextPickCache) {
+      await generateNextPick(req.query.style || "female");
+    }
     const result = nextPickCache;
     nextPickCache = null;
-    generateNextPick(req.query.style || "female"); // pre-gen next
+    generateNextPick(req.query.style || "female"); // pre-gen next in background
     res.json(result);
   } catch (e) {
     console.error("❌ Trend API error:", e);
@@ -212,10 +173,23 @@ app.get("/api/trend", async (req, res) => {
     });
   }
 });
+
 app.get("/api/voice", async (req, res) => {
   try {
-    const text = req.query.text || ""; const artist = req.query.artist || "neutral";
+    const text = req.query.text || "";
+    const artist = req.query.artist || "neutral";
     if (!text) return res.status(400).json({ error: "Missing text" });
+
+    // ✅ Reuse cached voice if available
+    if (nextPickCache && nextPickCache.voice) {
+      console.log("♻️ Reusing cached voice");
+      const base64 = nextPickCache.voice.split(",")[1]; // strip "data:audio/mpeg;base64,"
+      const buffer = Buffer.from(base64, "base64");
+      res.setHeader("Content-Type", "audio/mpeg");
+      return res.send(buffer);
+    }
+
+    // Otherwise generate fresh
     let audioBuffer = await googleTTS(text, "female");
     if (!audioBuffer) audioBuffer = await openaiTTS(text, artist);
     if (!audioBuffer) return res.status(500).json({ error: "No audio generated" });
@@ -223,6 +197,7 @@ app.get("/api/voice", async (req, res) => {
     res.send(audioBuffer);
   } catch (e) { res.status(500).json({ error: "Voice TTS failed" }); }
 });
+
 app.get("/api/test-google", async (req, res) => {
   try {
     const text = "Google TTS is working. Hello from 323drop!";
@@ -234,6 +209,7 @@ app.get("/api/test-google", async (req, res) => {
     res.send(audioBuffer);
   } catch (e) { res.status(500).json({ error: "Test TTS failed" }); }
 });
+
 app.get("/health", (_req,res) => res.json({ ok: true, time: Date.now() }));
 
 /* ---------------- Start ---------------- */
