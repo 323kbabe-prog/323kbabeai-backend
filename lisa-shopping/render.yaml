@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: lisa-shopping-api
+    runtime: node
+    plan: free
+    region: singapore
+    branch: lisa-shopping
+    buildCommand: node --check lisa-shopping/server.mjs
+    startCommand: node lisa-shopping/server.mjs
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: ALLOWED_ORIGIN
+        value: https://lisa-shopping.a078bc.chatgpt.site
+      - key: SERPAPI_API_KEY
+        sync: false
