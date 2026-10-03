@@ -5,7 +5,9 @@ const countries = new Set(['tw','us','gb','jp','kr','au','ca','in','sg','hk','de
 export const safeUrl = value => { try { const u = new URL(value); return ['https:','http:'].includes(u.protocol) && !u.username && !u.password ? u.href : null; } catch { return null; } };
 export function validate(input) {
   if (!input || typeof input.q !== 'string' || !input.q.trim() || input.q.trim().length > 200) throw new Error('Enter what you want to buy (up to 200 characters).');
-  const out = {q: input.q.trim(), country: countries.has(input.country) ? input.country : 'tw'};
+  if (typeof input.location !== 'string' || !input.location.trim() || input.location.trim().length > 120) throw new Error('Enter your shopping city and country (up to 120 characters).');
+  const out = {q: input.q.trim(), location: input.location.trim(), country: countries.has(input.country) ? input.country : 'tw'};
+  if (input.currency != null) { if (typeof input.currency !== 'string' || !/^[A-Z]{3}$/.test(input.currency)) throw new Error('Invalid currency.'); out.currency = input.currency; }
   for (const k of ['min','max']) if (input[k] != null) { if (typeof input[k] !== 'number' || !Number.isFinite(input[k]) || input[k] < 0 || input[k] > 1e12) throw new Error('Invalid price range.'); out[k] = input[k]; }
   if (out.min != null && out.max != null && out.min > out.max) throw new Error('Invalid price range.');
   return out;
