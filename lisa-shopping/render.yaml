@@ -13,5 +13,7 @@ services:
         value: 22
       - key: ALLOWED_ORIGIN
         value: https://lisa-shopping.a078bc.chatgpt.site
-      - key: SERPAPI_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.5
