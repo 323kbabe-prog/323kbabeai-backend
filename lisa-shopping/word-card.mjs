@@ -30,6 +30,7 @@ export function parseCards(response,input){
  if(response.status!=='completed'||!response.output?.some(x=>x.type==='web_search_call'&&x.status==='completed'))throw new Error('Search incomplete');
  const parsed=JSON.parse(response.output.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join(''));
  const sources=sourcesFrom(response),excluded=new Set(input.exclude.map(x=>x.toLowerCase()));
+ console.log(JSON.stringify({event:'word_card_qualification',items:(parsed.products||[]).map(p=>({title:p.title,price:p.price,currency:p.currency,productSource:sources.has(canonical(p.url)),priceSource:sources.has(canonical(p.source)),popularitySource:sources.has(canonical(p.popularitySource))}))}));
  const blocked=input.excludeSellers||[],seen=new Set();
  return (parsed.products||[]).filter(p=>p.currency===input.currency&&Number.isFinite(p.price)&&p.price>0&&p.price>=Math.round(input.amount*80)/100&&p.price<=Math.round(input.amount*110)/100&&sources.has(canonical(p.url))&&sources.has(canonical(p.source))&&p.popularity?.trim()&&sources.has(canonical(p.popularitySource))&&!blocked.some(host=>sellerHost(p.url)===host||sellerHost(p.url).endsWith('.'+host))&&p.word&&p.pinyin&&p.meaning&&p.title&&!excluded.has(p.title.toLowerCase())).sort((a,b)=>Math.abs(a.price-input.amount)-Math.abs(b.price-input.amount)||a.price-b.price).filter(p=>{const host=sellerHost(p.url);if(seen.has(host))return false;seen.add(host);return true;}).slice(0,3);
 }
