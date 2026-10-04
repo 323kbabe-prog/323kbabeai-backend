@@ -34,7 +34,7 @@ export function createApp({apiKey = process.env.OPENAI_API_KEY, fetcher = fetch,
     try {
       for await (const chunk of req) {raw += chunk; if (Buffer.byteLength(raw) > 4096) return reply(413,{error:'Search request is too large.'});}
       let input; try {input=validate(JSON.parse(raw));} catch(e) {return reply(400,{error:e instanceof SyntaxError?'Invalid request.':e.message});}
-      const key = JSON.stringify(input);
+      const key = JSON.stringify({...input,q:input.q.normalize('NFKC').toLowerCase().replace(/\s+/g,' '),location:input.location.normalize('NFKC').toLowerCase().replace(/\s+/g,' ')});
       const cached = cache.get(key); if (cached && cached.until > now) return reply(200,cached.data);
       const data = await gptSearch(input,{apiKey,fetcher});
       for (const [k,v] of cache) if (v.until < now) cache.delete(k);
