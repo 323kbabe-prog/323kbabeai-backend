@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {validateBudget,findWordCard} from './word-card.mjs';
 import { gptSearch } from './gpt-search.mjs';
 import { pathToFileURL } from 'node:url';
 const countries = new Set(['tw','us','gb','jp','kr','au','ca','in','sg','hk','de','fr']);
@@ -39,7 +40,7 @@ export function createApp({apiKey = process.env.OPENAI_API_KEY, fetcher = fetch,
     if (origin && origin !== allowedOrigin) return reply(403,{error:'This website is not allowed to use this service.'});
     if (req.method === 'OPTIONS') {res.writeHead(204,{'Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'86400'});return res.end();}
     if (req.url === '/health' && req.method === 'GET') return reply(200,{ok:true,searchReady:Boolean(apiKey),engine:"gpt-web-search"});
-    if (!['/api/search','/api/prepare'].includes(req.url) || req.method !== 'POST') return reply(404,{error:'Not found.'});
+    if (!['/api/search','/api/prepare','/api/card'].includes(req.url) || req.method !== 'POST') return reply(404,{error:'Not found.'});
     if (!apiKey) return reply(503,{error:'Live shopping search is being prepared. Please try again later.',code:'NOT_CONFIGURED'});
     const ip = req.socket.remoteAddress;
     const now = Date.now();
@@ -50,6 +51,7 @@ export function createApp({apiKey = process.env.OPENAI_API_KEY, fetcher = fetch,
     let raw = '';
     try {
       for await (const chunk of req) {raw += chunk; if (Buffer.byteLength(raw) > 12000) return reply(413,{error:'Search request is too large.'});}
+      if(req.url==='/api/card'){let input;try{input=validateBudget(JSON.parse(raw));}catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid request.':e.message});}return reply(200,await findWordCard(input,{apiKey,fetcher}));}
       if(req.url==='/api/prepare'){let messages;try{messages=validateConversation(JSON.parse(raw));}catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid request.':e.message});}return reply(200,await prepareSearch(messages,{apiKey,fetcher}));}
       let input; try {input=validate(JSON.parse(raw));} catch(e) {return reply(400,{error:e instanceof SyntaxError?'Invalid request.':e.message});}
       const key = JSON.stringify({...input,q:input.q.normalize('NFKC').toLowerCase().replace(/\s+/g,' '),location:input.location.normalize('NFKC').toLowerCase().replace(/\s+/g,' ')});
@@ -70,3 +72,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   server.listen(Number(process.env.PORT || 3000),'0.0.0.0',()=>console.log('LISA Shopping API is listening'));
   process.on('SIGTERM',()=>server.close(()=>process.exit(0)));
 }
+
