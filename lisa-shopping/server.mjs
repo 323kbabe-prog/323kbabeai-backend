@@ -53,13 +53,16 @@ export function createApp({apiKey = process.env.OPENAI_API_KEY, fetcher = fetch,
       if(req.url==='/api/prepare'){let messages;try{messages=validateConversation(JSON.parse(raw));}catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid request.':e.message});}return reply(200,await prepareSearch(messages,{apiKey,fetcher}));}
       let input; try {input=validate(JSON.parse(raw));} catch(e) {return reply(400,{error:e instanceof SyntaxError?'Invalid request.':e.message});}
       const key = JSON.stringify({...input,q:input.q.normalize('NFKC').toLowerCase().replace(/\s+/g,' '),location:input.location.normalize('NFKC').toLowerCase().replace(/\s+/g,' ')});
-      const cached = cache.get(key); if (cached && cached.until > now) return reply(200,cached.data);
-      const data = await gptSearch(input,{apiKey,fetcher});
+      const streaming=req.headers.accept?.includes('application/x-ndjson');
+      const emit=(type,data)=>{if(!res.destroyed)res.write(JSON.stringify({type,...data})+'\n');};
+      if(streaming){res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no'});res.flushHeaders();emit('start',{query:input.q,location:input.location});}
+      const cached = cache.get(key); if (cached && cached.until > now){if(streaming){for(const product of cached.data.products)emit('place',{product});emit('complete',{data:cached.data});return res.end();}return reply(200,cached.data);}
+      const data = await gptSearch(input,{apiKey,fetcher,onProduct:streaming?product=>emit('place',{product}):undefined});
       for (const [k,v] of cache) if (v.until < now) cache.delete(k);
       if(cache.size >= 200) cache.delete(cache.keys().next().value);
       cache.set(key,{data,until:now+600000});
-      return reply(200,data);
-    } catch {return reply(502,{error:'Shopping search took too long or could not connect. Please try again.'});}
+      if(streaming){emit('complete',{data});return res.end();}return reply(200,data);
+    } catch {if(res.headersSent){res.end(JSON.stringify({type:'error',error:'Search interrupted. Please try again.'})+'\n');return;}return reply(502,{error:'Shopping search took too long or could not connect. Please try again.'});}
   });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
